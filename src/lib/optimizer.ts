@@ -1,9 +1,28 @@
 /**
  * Structured Prompt Optimizer
  * Implements 8-step algorithm for converting raw prompts into concise, structured outputs
+ * Enhanced with advanced NLP techniques
  */
 
 import type { OptimizationResult } from "./heuristics"
+import {
+  extractSemanticMeaning,
+  calculateSemanticSimilarity,
+  detectRedundantSentences,
+  mergeSimilarSentences,
+  improveSentenceClarity,
+  extractKeyInformation,
+  extractCoreIntent
+} from "./nlp-enhancer"
+import {
+  extractIntentWithNLP,
+  detectRedundancyNLP,
+  mergeSentencesNLP,
+  improveClarityNLP,
+  extractRoleNLP,
+  extractConstraintsNLP,
+  spellCheckAndFix
+} from "./nlp-enhanced"
 
 interface ParsedIntent {
   goal: string
@@ -40,26 +59,17 @@ interface StructuredPrompt {
 
 /**
  * Step 1: Parse Intent
- * Identify the main goal of the prompt
+ * Identify the main goal of the prompt using enhanced NLP
  */
 function parseIntent(prompt: string): ParsedIntent {
+  // Use compromise NLP for better intent extraction
+  const nlpIntent = extractIntentWithNLP(prompt)
+  const coreIntent = extractCoreIntent(prompt)
+  const keyInfo = extractKeyInformation(prompt)
   const lowerPrompt = prompt.toLowerCase()
   
-  // Common action verbs
-  const actions = [
-    "write", "create", "generate", "make", "build", "develop",
-    "explain", "describe", "analyze", "discuss", "summarize",
-    "design", "plan", "outline", "list", "show", "tell"
-  ]
-  
-  // Find action verb
-  let action = "create"
-  for (const act of actions) {
-    if (lowerPrompt.includes(act)) {
-      action = act
-      break
-    }
-  }
+  // Use NLP-extracted action (more accurate)
+  let action = nlpIntent.action || keyInfo.mainAction || "create"
   
   // Extract audience (if mentioned)
   const audiencePatterns = [
@@ -108,15 +118,15 @@ function parseIntent(prompt: string): ParsedIntent {
     }
   }
   
-  // Extract subject (what the prompt is about)
-  // Look for patterns like "about X", "on X", "regarding X"
-  const aboutPattern = /(?:about|on|regarding|concerning|introducing)\s+([^.,!?]+)/i
-  const aboutMatch = prompt.match(aboutPattern)
-  const subject = aboutMatch ? aboutMatch[1].trim() : extractSubject(prompt)
+  // Extract subject using compromise NLP (more accurate)
+  const semantic = extractSemanticMeaning(prompt)
+  const subject = nlpIntent.subject || keyInfo.subject || semantic.entities[0] || semantic.concepts[0] || extractSubject(prompt)
   
-  // Extract goal (first sentence or main clause)
-  const sentences = prompt.split(/[.!?]+/).filter(s => s.trim().length > 0)
-  const goal = sentences[0]?.trim() || prompt.substring(0, 100).trim()
+  // Extract goal using NLP core intent (more accurate)
+  const goal = coreIntent.intent || (() => {
+    const sentences = prompt.split(/[.!?]+/).filter(s => s.trim().length > 0)
+    return sentences[0]?.trim() || prompt.substring(0, 100).trim()
+  })()
   
   return { goal, action, subject, audience }
 }
@@ -142,10 +152,20 @@ function extractSubject(prompt: string): string {
  */
 function extractKeyTasks(prompt: string, mainGoal: string): ExtractedTask[] {
   // Split into sentences
-  const sentences = prompt
+  let sentences = prompt
     .split(/[.!?]+/)
     .map(s => s.trim())
     .filter(s => s.length > 10) // Filter out very short fragments
+  
+  // Use compromise NLP for better redundancy detection
+  const redundantFlags = detectRedundancyNLP(sentences)
+  sentences = sentences.filter((_, i) => !redundantFlags[i])
+  
+  // Merge similar sentences using NLP
+  sentences = mergeSentencesNLP(sentences)
+  
+  // Improve sentence clarity using NLP
+  sentences = sentences.map(s => improveClarityNLP(s))
   
   const tasks: ExtractedTask[] = []
   const seenKeywords = new Map<string, number>()
@@ -154,30 +174,39 @@ function extractKeyTasks(prompt: string, mainGoal: string): ExtractedTask[] {
   const goalKeywords = extractKeywords(mainGoal.toLowerCase())
   const goalText = mainGoal.toLowerCase()
   
+  // Extract semantic meaning from main goal
+  const goalSemantic = extractSemanticMeaning(mainGoal)
+  
   // Extract keywords from each sentence
   sentences.forEach((sentence, index) => {
     // Skip the first sentence if it's the main goal (usually is)
     if (index === 0) {
       const sentenceLower = sentence.toLowerCase()
       const goalOverlap = calculateOverlap(extractKeywords(sentenceLower), goalKeywords)
+      // Use semantic similarity for better detection
+      const semanticSimilarity = calculateSemanticSimilarity(sentence, mainGoal)
       // If first sentence overlaps >70% with goal, skip it
-      if (goalOverlap > 0.7 || sentenceLower.includes(goalText.substring(0, 30))) {
+      if (goalOverlap > 0.7 || semanticSimilarity > 0.75 || sentenceLower.includes(goalText.substring(0, 30))) {
         return
       }
     }
     
     // Remove filler words
-    const cleaned = sentence
+    let cleaned = sentence
       .replace(/\b(please|kindly|also|make sure|ensure|should|must|the summary should|talk about|discuss)\b/gi, "")
       .trim()
     
-    // Skip if this is just restating the goal
+    // Improve clarity using NLP
+    cleaned = improveSentenceClarity(cleaned)
+    
+    // Skip if this is just restating the goal using semantic similarity
     const cleanedLower = cleaned.toLowerCase()
     if (goalKeywords.length > 0) {
       const cleanedKeywords = extractKeywords(cleanedLower)
       const overlap = calculateOverlap(cleanedKeywords, goalKeywords)
-      // If >60% overlap with goal, it's redundant
-      if (overlap > 0.6 && cleanedKeywords.length <= goalKeywords.length + 2) {
+      const semanticSim = calculateSemanticSimilarity(cleaned, mainGoal)
+      // If >60% overlap with goal OR high semantic similarity, it's redundant
+      if ((overlap > 0.6 && cleanedKeywords.length <= goalKeywords.length + 2) || semanticSim > 0.7) {
         return
       }
     }
@@ -197,7 +226,7 @@ function extractKeyTasks(prompt: string, mainGoal: string): ExtractedTask[] {
     })
   })
   
-  // Mark duplicates (tasks with overlapping keywords)
+  // Mark duplicates using semantic similarity (more accurate than keyword overlap)
   tasks.forEach((task, i) => {
     if (task.isDuplicate) return
     
@@ -207,7 +236,10 @@ function extractKeyTasks(prompt: string, mainGoal: string): ExtractedTask[] {
       if (other.isDuplicate) continue
       
       const overlap = calculateOverlap(task.keywords, other.keywords)
-      if (overlap > 0.6) { // 60% keyword overlap = duplicate
+      // Use compromise NLP for better semantic similarity
+      const semanticSim = calculateSemanticSimilarity(task.text, other.text)
+      // Use both keyword overlap and semantic similarity
+      if (overlap > 0.6 || semanticSim > 0.7) {
         other.isDuplicate = true
       }
     }
@@ -855,17 +887,24 @@ export function optimizePrompt(prompt: string): OptimizationResult {
     }
   }
   
+  // Step 0: Fix spelling mistakes using NLP
+  const spellCheck = spellCheckAndFix(prompt)
+  let workingPrompt = spellCheck.corrected
+  if (spellCheck.corrections.length > 0) {
+    techniques.push(`Fixed ${spellCheck.corrections.length} spelling mistake${spellCheck.corrections.length > 1 ? 's' : ''}`)
+  }
+  
   // Step 1: Parse Intent
-  const intent = parseIntent(prompt)
+  const intent = parseIntent(workingPrompt)
   techniques.push("Parsed intent")
   
   // Step 2: Extract Key Tasks (pass main goal to filter it out)
   const mainGoal = intent.goal
-  const tasks = extractKeyTasks(prompt, mainGoal)
+  const tasks = extractKeyTasks(workingPrompt, mainGoal)
   techniques.push(`Extracted ${tasks.length} unique tasks`)
   
   // Step 3: Remove Redundancy (also remove excessive subject mentions)
-  let cleanedPrompt = removeRedundancy(prompt, intent.subject)
+  let cleanedPrompt = removeRedundancy(workingPrompt, intent.subject)
   techniques.push("Removed redundancy")
   
   // Step 4: Group into Sections
@@ -875,13 +914,13 @@ export function optimizePrompt(prompt: string): OptimizationResult {
   }
   
   // Step 5: Define Format & Tone
-  const formatAndTone = extractFormatAndTone(prompt)
+  const formatAndTone = extractFormatAndTone(workingPrompt)
   if (formatAndTone.format || formatAndTone.tone) {
     techniques.push("Detected format and tone")
   }
   
   // Step 6: Add Constraints
-  const constraints = extractConstraints(prompt)
+  const constraints = extractConstraints(workingPrompt)
   if (constraints.wordCount || constraints.style || constraints.scope) {
     techniques.push("Extracted constraints")
   }

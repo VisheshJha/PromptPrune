@@ -21,7 +21,7 @@ export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerPr
   const [showSetupGuide, setShowSetupGuide] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [showFrameworks, setShowFrameworks] = useState(false)
-  const [selectedFramework, setSelectedFramework] = useState<FrameworkType | null>(null)
+  const [selectedFramework, setSelectedFramework] = useState<FrameworkType | null>("create") // CREATE is default
   const [frameworkPrompt, setFrameworkPrompt] = useState<string>("")
   const [optimizationStats, setOptimizationStats] = useState<{
     reduction: number
@@ -41,11 +41,16 @@ export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerPr
   //   return () => clearInterval(interval)
   // }, [])
 
-  // Apply framework when selected
+  // Apply framework when selected (CREATE is default)
   useEffect(() => {
     if (selectedFramework && originalPrompt.trim()) {
       const frameworkOutput = applyFramework(originalPrompt, selectedFramework)
       setFrameworkPrompt(frameworkOutput.optimized)
+    } else if (originalPrompt.trim()) {
+      // Default to CREATE if no framework selected
+      const frameworkOutput = applyFramework(originalPrompt, "create")
+      setFrameworkPrompt(frameworkOutput.optimized)
+      setSelectedFramework("create")
     } else {
       setFrameworkPrompt("")
     }
@@ -111,9 +116,9 @@ export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerPr
 
   return (
     <div className="space-y-4">
-      {/* Framework Selector - Before Optimize */}
+      {/* Framework Selector - Before Optimize - Material Design */}
       {originalPrompt.trim() && (
-        <div className="backdrop-blur-md bg-white/70 border border-white/20 rounded-xl p-4 shadow-lg">
+        <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
           <button
             onClick={() => setShowFrameworks(!showFrameworks)}
             className="w-full flex items-center justify-between text-left"
@@ -210,8 +215,8 @@ export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerPr
         </div>
       )}
 
-      {/* Core Feature - Always Available */}
-      <div className="backdrop-blur-md bg-white/70 border border-white/20 rounded-xl p-4 shadow-lg">
+      {/* Core Feature - Always Available - Material Design */}
+      <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
         <div className="flex items-center justify-between mb-3">
           <div>
             <div className="text-sm font-semibold text-gray-800">Rule-Based Optimization</div>
@@ -225,21 +230,29 @@ export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerPr
           </div>
         )}
         {selectedFramework && frameworkPrompt && (
-          <div className="mb-3 p-2 bg-primary-50/30 border border-primary-200/30 rounded text-xs text-gray-700">
+          <div className="mb-3 p-2 bg-primary-50 border border-primary-200 rounded-md text-xs text-gray-700">
             <span className="font-semibold">{FRAMEWORKS[selectedFramework].name}</span> framework will be applied before optimization
+            {selectedFramework === "create" && (
+              <span className="text-primary-600 ml-1">(Default)</span>
+            )}
+          </div>
+        )}
+        {!selectedFramework && originalPrompt.trim() && (
+          <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded-md text-xs text-gray-700">
+            <span className="font-semibold">CREATE</span> framework is used by default. You can change it in the output modal.
           </div>
         )}
         <button
           onClick={handleOptimize}
           disabled={loading || !originalPrompt.trim()}
-          className="w-full bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 disabled:from-gray-300 disabled:to-gray-400 text-white font-medium py-2.5 px-4 rounded-lg transition-all shadow-md hover:shadow-lg disabled:shadow-none disabled:cursor-not-allowed"
+          className="w-full bg-primary-600 hover:bg-primary-700 disabled:bg-gray-300 text-white font-medium py-2.5 px-4 rounded-md transition-colors shadow-sm hover:shadow disabled:shadow-none disabled:cursor-not-allowed"
         >
-          {loading ? "Optimizing..." : selectedFramework ? `Optimize with ${FRAMEWORKS[selectedFramework].name.split(" ")[0]}` : "Optimize Prompt"}
+          {loading ? "Optimizing..." : selectedFramework ? `Optimize with ${FRAMEWORKS[selectedFramework].name.split(" ")[0]}` : "Optimize Prompt (CREATE default)"}
         </button>
       </div>
 
-      {/* Smart Feature - Optional Ollama - WIP */}
-      <div className="backdrop-blur-md bg-gray-50/60 border border-gray-200/30 rounded-xl p-4 shadow-lg opacity-75">
+      {/* Smart Feature - Optional Ollama - WIP - Material Design */}
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 shadow-sm opacity-75">
         <div className="flex items-center justify-between mb-2">
           <div>
             <div className="text-sm font-semibold text-gray-600 flex items-center gap-2">
@@ -277,6 +290,8 @@ export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerPr
       {showModal && optimized && (
         <OptimizedPromptModal
           optimized={optimized}
+          originalPrompt={originalPrompt}
+          currentFramework={selectedFramework || "create"}
           stats={optimizationStats || undefined}
           onClose={() => setShowModal(false)}
         />

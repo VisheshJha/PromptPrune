@@ -3,6 +3,12 @@
  * Transform prompts using different structured approaches
  */
 
+import {
+  extractRoleNLP,
+  extractConstraintsNLP,
+  extractIntentWithNLP
+} from "./nlp-enhanced"
+
 export interface FrameworkOutput {
   framework: string
   name: string
@@ -68,44 +74,51 @@ export const FRAMEWORKS = {
     useCase: "Goal-oriented prompts",
     icon: "🎯",
   },
+  create: {
+    name: "CREATE (Context, Role, Expectation, Action, Tone, Examples)",
+    description: "Comprehensive framework for structured prompts",
+    useCase: "Complex, multi-faceted prompts requiring structure",
+    icon: "🎨",
+  },
 } as const
 
 export type FrameworkType = keyof typeof FRAMEWORKS
 
 /**
- * Parse a prompt to extract key components
+ * Parse a prompt to extract key components using NLP
  */
 function parsePrompt(prompt: string): ParsedPrompt {
   const lower = prompt.toLowerCase()
   
-  // Extract role
-  const roleMatch = prompt.match(/(?:act as|you are|role:|as a)\s+([^.,!?\n]+)/i)
-  const role = roleMatch ? roleMatch[1].trim() : undefined
+  // Extract role using NLP
+  const role = extractRoleNLP(prompt) || undefined
   
-  // Extract task/action
-  const actionWords = ["write", "create", "generate", "build", "make", "design", "analyze", "explain", "summarize"]
-  const action = actionWords.find(word => lower.includes(word))
-  const taskMatch = prompt.match(new RegExp(`(${actionWords.join("|")})\\s+([^.,!?\n]+)`, "i"))
-  const task = taskMatch ? taskMatch[2].trim() : prompt.split(/[.!?]/)[0].trim()
+  // Extract task/action using NLP
+  const intent = extractIntentWithNLP(prompt)
+  const action = intent.action
+  const taskMatch = prompt.match(new RegExp(`(${intent.verbs.join("|")})\\s+([^.,!?\n]+)`, "i"))
+  const task = taskMatch ? taskMatch[2].trim() : intent.subject || prompt.split(/[.!?]/)[0].trim()
   
   // Extract context
   const contextMatch = prompt.match(/(?:context:|background:|given that|considering)\s+([^.,!?\n]+)/i)
   const context = contextMatch ? contextMatch[1].trim() : undefined
   
-  // Extract constraints
-  const constraintWords = ["limit", "must", "should", "require", "constraint", "rule"]
-  const hasConstraints = constraintWords.some(word => lower.includes(word))
-  const constraints = hasConstraints ? prompt.split(/[.!?]/).filter(s => 
-    constraintWords.some(word => s.toLowerCase().includes(word))
-  ).join(". ") : undefined
+  // Extract constraints using NLP
+  const nlpConstraints = extractConstraintsNLP(prompt)
+  const constraints = nlpConstraints.wordCount || nlpConstraints.style || nlpConstraints.format
+    ? `Word count: ${nlpConstraints.wordCount || "not specified"}, Style: ${nlpConstraints.style || nlpConstraints.tone || "not specified"}, Format: ${nlpConstraints.format || "not specified"}`
+    : undefined
   
   // Extract expected output
   const outputMatch = prompt.match(/(?:output:|result:|should be|must be|format:)\s+([^.,!?\n]+)/i)
   const expectedOutput = outputMatch ? outputMatch[1].trim() : undefined
   
-  // Extract style
-  const styleMatch = prompt.match(/(?:tone:|style:|tone of|style of)\s+([^.,!?\n]+)/i)
-  const style = styleMatch ? styleMatch[1].trim() : undefined
+  // Extract style using NLP
+  const nlpConstraintsForStyle = extractConstraintsNLP(prompt)
+  const style = nlpConstraintsForStyle.tone || nlpConstraintsForStyle.style || (() => {
+    const styleMatch = prompt.match(/(?:tone:|style:|tone of|style of)\s+([^.,!?\n]+)/i)
+    return styleMatch ? styleMatch[1].trim() : undefined
+  })()
   
   // Extract examples
   const exampleMatch = prompt.match(/(?:example:|for example|e\.g\.|such as)\s+([^.,!?\n]+)/i)
@@ -308,6 +321,49 @@ function applyGUIDE(parsed: ParsedPrompt): string {
 }
 
 /**
+ * Apply CREATE framework
+ */
+function applyCREATE(parsed: ParsedPrompt): string {
+  const parts: string[] = []
+  
+  // Context
+  const context = parsed.context || "Standard context"
+  parts.push(`Context: ${context}`)
+  
+  // Role
+  const role = parsed.role || "Expert"
+  parts.push(`Role: You are ${role}`)
+  
+  // Expectation
+  const expectation = parsed.expectedOutput || "High-quality, complete output"
+  parts.push(`Expectation: ${expectation}`)
+  
+  // Action
+  const action = parsed.task || parsed.intent.split(/[.!?]/)[0]
+  parts.push(`Action: ${action}`)
+  
+  // Tone
+  const tone = parsed.style || "Professional and clear"
+  parts.push(`Tone: ${tone}`)
+  
+  // Examples
+  if (parsed.examples && parsed.examples.length > 0) {
+    parts.push(`Examples:`)
+    parsed.examples.forEach((ex, i) => {
+      parts.push(`${i + 1}. ${ex}`)
+    })
+  } else {
+    parts.push(`Examples: [Provide relevant examples]`)
+  }
+  
+  if (parsed.constraints) {
+    parts.push(`\nConstraints: ${parsed.constraints}`)
+  }
+  
+  return parts.join("\n")
+}
+
+/**
  * Apply SMART framework
  */
 function applySMART(parsed: ParsedPrompt): string {
@@ -369,6 +425,9 @@ export function applyFramework(
       break
     case "smart":
       optimized = applySMART(parsed)
+      break
+    case "create":
+      optimized = applyCREATE(parsed)
       break
     default:
       optimized = prompt

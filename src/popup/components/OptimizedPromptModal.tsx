@@ -1,7 +1,11 @@
 import { useState, useEffect } from "react"
+import { applyFramework, FRAMEWORKS, type FrameworkType } from "~/lib/prompt-frameworks"
+import { optimizePrompt } from "~/lib/optimizer"
 
 interface OptimizedPromptModalProps {
   optimized: string
+  originalPrompt: string
+  currentFramework: FrameworkType
   stats?: {
     reduction: number
     reductionPercent: number
@@ -12,19 +16,37 @@ interface OptimizedPromptModalProps {
 
 export function OptimizedPromptModal({
   optimized,
+  originalPrompt,
+  currentFramework,
   stats,
   onClose,
 }: OptimizedPromptModalProps) {
   const [copied, setCopied] = useState(false)
+  const [selectedFramework, setSelectedFramework] = useState<FrameworkType>(currentFramework)
+  const [frameworkOptimized, setFrameworkOptimized] = useState<string>(optimized)
+
+  // Update framework output when framework changes and optimize it
+  useEffect(() => {
+    if (originalPrompt.trim()) {
+      const frameworkOutput = applyFramework(originalPrompt, selectedFramework)
+      // Optimize the framework-structured prompt
+      const optimized = optimizePrompt(frameworkOutput.optimized)
+      setFrameworkOptimized(optimized.optimized)
+    }
+  }, [selectedFramework, originalPrompt])
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(optimized)
+      await navigator.clipboard.writeText(frameworkOptimized)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     } catch (err) {
       console.error("Failed to copy:", err)
     }
+  }
+
+  const handleFrameworkChange = (framework: FrameworkType) => {
+    setSelectedFramework(framework)
   }
 
   // Close on Escape key
@@ -49,22 +71,28 @@ export function OptimizedPromptModal({
       }}
     >
       <div 
-        className="backdrop-blur-xl bg-gradient-to-br from-white/95 to-white/90 rounded-2xl shadow-2xl border border-white/30 w-full max-w-2xl max-h-[90vh] flex flex-col animate-fade-in animate-zoom-in"
+        className="bg-white rounded-lg shadow-lg border border-gray-200 w-full max-w-2xl max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="bg-gradient-to-r from-primary-600/95 to-primary-700/95 backdrop-blur-md text-white p-4 rounded-t-2xl border-b border-white/10 flex items-center justify-between">
-          <div>
-            <h2 className="text-xl font-bold">Optimized Prompt</h2>
-            {stats && (
-              <p className="text-xs opacity-90 mt-1">
-                Reduced by {stats.reductionPercent}% ({stats.reduction.toLocaleString()} chars)
+        {/* Header - Material Design */}
+        <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+          <div className="flex-1">
+            <h2 className="text-xl font-normal text-gray-900">Optimized Prompt</h2>
+            <div className="flex items-center gap-3 mt-2">
+              {stats && (
+                <p className="text-xs text-gray-600">
+                  Reduced by {stats.reductionPercent}% ({stats.reduction.toLocaleString()} chars)
+                </p>
+              )}
+              <span className="text-xs text-gray-500">•</span>
+              <p className="text-xs text-gray-600">
+                Using <span className="font-medium">{FRAMEWORKS[selectedFramework].name}</span> framework
               </p>
-            )}
+            </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+            className="p-2 hover:bg-gray-100 rounded-lg transition-colors text-gray-600"
             aria-label="Close"
           >
             <svg
@@ -83,12 +111,35 @@ export function OptimizedPromptModal({
           </button>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4">
+        {/* Framework Selector */}
+        <div className="px-6 py-3 bg-gray-50 border-b border-gray-200">
+          <div className="flex items-center gap-3">
+            <label className="text-xs font-medium text-gray-700 whitespace-nowrap">
+              Framework:
+            </label>
+            <select
+              value={selectedFramework}
+              onChange={(e) => handleFrameworkChange(e.target.value as FrameworkType)}
+              className="flex-1 text-sm border border-gray-300 rounded-md px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+            >
+              {Object.entries(FRAMEWORKS).map(([key, framework]) => (
+                <option key={key} value={key}>
+                  {framework.name} {key === "create" && "(Default)"}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-gray-500 hidden sm:inline">
+              💡 CREATE is our default framework
+            </span>
+          </div>
+        </div>
+
+        {/* Content - Material Design */}
+        <div className="flex-1 overflow-y-auto p-6 bg-white">
           <textarea
             readOnly
-            value={optimized}
-            className="w-full h-full min-h-[300px] p-4 text-sm border border-white/30 rounded-xl resize-none focus:outline-none focus:ring-2 focus:ring-primary-500/50 bg-white/60 backdrop-blur-sm font-mono leading-relaxed"
+            value={frameworkOptimized}
+            className="w-full h-full min-h-[300px] p-4 text-sm border border-gray-300 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white font-mono leading-relaxed"
             onClick={(e) => {
               // Select all text on click
               ;(e.target as HTMLTextAreaElement).select()
@@ -96,8 +147,8 @@ export function OptimizedPromptModal({
           />
         </div>
 
-        {/* Footer with stats and actions */}
-        <div className="border-t border-white/20 p-4 bg-white/40 backdrop-blur-sm rounded-b-2xl">
+        {/* Footer with stats and actions - Material Design */}
+        <div className="border-t border-gray-200 px-6 py-4 bg-white">
           {stats?.techniques && stats.techniques.length > 0 && (
             <div className="mb-3 text-xs text-gray-600">
               <span className="font-semibold">Techniques used:</span>{" "}
@@ -107,7 +158,7 @@ export function OptimizedPromptModal({
           <div className="flex gap-3">
             <button
               onClick={handleCopy}
-              className="flex-1 backdrop-blur-md bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 text-white font-medium py-2.5 px-4 rounded-lg transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2"
+              className="flex-1 bg-primary-600 hover:bg-primary-700 text-white font-medium py-2.5 px-4 rounded-md transition-colors shadow-sm hover:shadow flex items-center justify-center gap-2"
             >
               {copied ? (
                 <>
@@ -147,7 +198,7 @@ export function OptimizedPromptModal({
             </button>
             <button
               onClick={onClose}
-              className="px-6 backdrop-blur-md bg-white/70 hover:bg-white/90 border border-white/30 text-gray-700 font-medium py-2.5 rounded-lg transition-all shadow-md hover:shadow-lg"
+              className="px-6 bg-white hover:bg-gray-50 border border-gray-300 text-gray-700 font-medium py-2.5 rounded-md transition-colors shadow-sm"
             >
               Close
             </button>
