@@ -1,6 +1,2 @@
-import type { PlasmoCSConfig } from "plasmo"
-
-export const config: PlasmoCSConfig = {
-  matches: ["<all_urls>"],
-}
+// Content script config is now in src/content.ts
 

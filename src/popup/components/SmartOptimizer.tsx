@@ -1,11 +1,8 @@
 import { useState, useEffect } from "react"
-import { optimizeWithOllama, checkOllamaAvailable, type OllamaOptimizeResponse } from "~/lib/ollama"
-import { optimizePrompt, type OptimizationResult } from "~/lib/optimizer"
-import { OllamaSetupGuide } from "./OllamaSetupGuide"
 import { saveOptimizationRecord } from "~/lib/savings-tracker"
 import { getAllTokenCounts, getAverageTokenCount } from "~/lib/tokenizers"
 import { OptimizedPromptModal } from "./OptimizedPromptModal"
-import { applyFramework, FRAMEWORKS, type FrameworkType } from "~/lib/prompt-frameworks"
+import { applyFramework, rankFrameworks, FRAMEWORKS, type FrameworkType } from "~/lib/prompt-frameworks"
 
 interface SmartOptimizerProps {
   originalPrompt: string
@@ -13,100 +10,133 @@ interface SmartOptimizerProps {
 }
 
 export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerProps) {
-  const [optimized, setOptimized] = useState<string>("")
+  const [analyzed, setAnalyzed] = useState<string>("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [usingOllama, setUsingOllama] = useState(false)
-  const [ollamaAvailable, setOllamaAvailable] = useState<boolean | null>(null)
-  const [showSetupGuide, setShowSetupGuide] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [showFrameworks, setShowFrameworks] = useState(false)
-  const [selectedFramework, setSelectedFramework] = useState<FrameworkType | null>("create") // CREATE is default
+  const [selectedFramework, setSelectedFramework] = useState<FrameworkType | null>(null)
   const [frameworkPrompt, setFrameworkPrompt] = useState<string>("")
-  const [optimizationStats, setOptimizationStats] = useState<{
+  const [bestFitFramework, setBestFitFramework] = useState<FrameworkType | null>(null)
+  const [analysisStats, setAnalysisStats] = useState<{
     reduction: number
     reductionPercent: number
-    techniques?: string[]
   } | null>(null)
 
-  // Disabled for now - WIP
-  // useEffect(() => {
-  //   // Check Ollama availability on mount and periodically
-  //   const checkAvailability = async () => {
-  //     const available = await checkOllamaAvailable()
-  //     setOllamaAvailable(available)
-  //   }
-  //   checkAvailability()
-  //   const interval = setInterval(checkAvailability, 10000) // Check every 10 seconds
-  //   return () => clearInterval(interval)
-  // }, [])
 
-  // Apply framework when selected (CREATE is default)
+
+  // Rank frameworks and find best fit when prompt changes
+  useEffect(() => {
+    if (!originalPrompt.trim()) {
+      setFrameworkPrompt("")
+      setBestFitFramework(null)
+      setSelectedFramework(null)
+      return
+    }
+
+    // Rank frameworks to find the best fit
+    const rankings = rankFrameworks(originalPrompt)
+    const topRanked = rankings.length > 0 ? rankings[0] : null
+    
+    if (topRanked) {
+      setBestFitFramework(topRanked.framework)
+      // Auto-select best fit if no manual selection exists
+      setSelectedFramework(prev => prev || topRanked.framework)
+    } else {
+      // Fallback to CREATE if ranking fails
+      setBestFitFramework("create")
+      setSelectedFramework(prev => prev || "create")
+    }
+  }, [originalPrompt])
+
+  // Apply selected framework when it changes
   useEffect(() => {
     if (selectedFramework && originalPrompt.trim()) {
       const frameworkOutput = applyFramework(originalPrompt, selectedFramework)
       setFrameworkPrompt(frameworkOutput.optimized)
-    } else if (originalPrompt.trim()) {
-      // Default to CREATE if no framework selected
-      const frameworkOutput = applyFramework(originalPrompt, "create")
-      setFrameworkPrompt(frameworkOutput.optimized)
-      setSelectedFramework("create")
-    } else {
+    } else if (!originalPrompt.trim()) {
       setFrameworkPrompt("")
     }
   }, [selectedFramework, originalPrompt])
 
-  const handleOptimize = async () => {
-    // Use framework prompt if available, otherwise use original
-    const promptToOptimize = frameworkPrompt || originalPrompt
-    
-    if (!promptToOptimize.trim()) {
-      setError("Please enter a prompt to optimize")
+  const handleAnalyze = async () => {
+    if (!originalPrompt.trim()) {
+      setError("Please enter a prompt to analyze")
       return
     }
 
     setLoading(true)
     setError(null)
-    setOptimized("")
-    setOptimizationStats(null)
+    setAnalyzed("")
+    setAnalysisStats(null)
 
     try {
-      // Smart ML Optimization disabled for now (WIP)
-      // Always use rule-based optimizer
-      const result: OptimizationResult = optimizePrompt(promptToOptimize)
-      setOptimized(result.optimized)
-      setUsingOllama(false)
-      setOptimizationStats({
-        reduction: result.reduction,
-        reductionPercent: Math.round(
-          (result.reduction / result.originalLength) * 100
-        ),
-        techniques: result.techniques,
-      })
-      onOptimized(result.optimized)
-      setShowModal(true)
-
+      // Use the best fit framework output directly (not the optimized template)
+      if (selectedFramework && frameworkPrompt) {
+        // Use the framework output directly
+        setAnalyzed(frameworkPrompt)
+        onOptimized(frameworkPrompt)
+        setShowModal(true)
+        
+        // Track savings with framework output
+        try {
+          const [originalCounts, frameworkCounts] = await Promise.all([
+            getAllTokenCounts(originalPrompt),
+            getAllTokenCounts(frameworkPrompt),
+          ])
+          const originalAvg = getAverageTokenCount(originalCounts)
+          const frameworkAvg = getAverageTokenCount(frameworkCounts)
+          const reduction = originalAvg - frameworkAvg
+          
+          setAnalysisStats({
+            reduction: reduction > 0 ? reduction : 0,
+            reductionPercent: originalAvg > 0 ? Math.round((reduction / originalAvg) * 100) : 0,
+          })
+          
+          await saveOptimizationRecord(
+            originalPrompt,
+            frameworkPrompt,
+            originalAvg,
+            frameworkAvg,
+            "average"
+          )
+        } catch (err) {
+          console.warn("Failed to track savings:", err)
+        }
+      } else {
+        // Fallback: if no framework selected, use best fit
+        const rankings = rankFrameworks(originalPrompt)
+        const bestFit = rankings.length > 0 ? rankings[0] : null
+        
+        if (bestFit) {
+          setAnalyzed(bestFit.output.optimized)
+          onOptimized(bestFit.output.optimized)
+          setShowModal(true)
+          
           // Track savings
           try {
-            const [originalCounts, optimizedCounts] = await Promise.all([
-              getAllTokenCounts(promptToOptimize),
-              getAllTokenCounts(result.optimized),
+            const [originalCounts, frameworkCounts] = await Promise.all([
+              getAllTokenCounts(originalPrompt),
+              getAllTokenCounts(bestFit.output.optimized),
             ])
-        const originalAvg = getAverageTokenCount(originalCounts)
-        const optimizedAvg = getAverageTokenCount(optimizedCounts)
-            await saveOptimizationRecord(
-              promptToOptimize,
-              result.optimized,
-              originalAvg,
-              optimizedAvg,
-              "average"
-            )
-      } catch (err) {
-        console.warn("Failed to track savings:", err)
+            const originalAvg = getAverageTokenCount(originalCounts)
+            const frameworkAvg = getAverageTokenCount(frameworkCounts)
+            const reduction = originalAvg - frameworkAvg
+            
+            setAnalysisStats({
+              reduction: reduction > 0 ? reduction : 0,
+              reductionPercent: originalAvg > 0 ? Math.round((reduction / originalAvg) * 100) : 0,
+            })
+          } catch (err) {
+            console.warn("Failed to track savings:", err)
+          }
+        } else {
+          setError("Unable to analyze prompt")
+        }
       }
     } catch (err) {
-      console.error("Optimization error:", err)
-      setError(err instanceof Error ? err.message : "Failed to optimize prompt")
+      console.error("Analysis error:", err)
+      setError(err instanceof Error ? err.message : "Failed to analyze prompt")
     } finally {
       setLoading(false)
     }
@@ -126,9 +156,14 @@ export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerPr
             <div>
               <div className="text-sm font-semibold text-gray-800">
                 Apply Prompt Framework {selectedFramework && `(${FRAMEWORKS[selectedFramework].name})`}
+                {bestFitFramework && selectedFramework === bestFitFramework && (
+                  <span className="ml-2 text-xs bg-green-600 text-white px-2 py-0.5 rounded-full font-medium">BEST FIT</span>
+                )}
               </div>
               <div className="text-xs text-gray-600">
-                Structure your prompt using proven frameworks
+                {bestFitFramework 
+                  ? `Best fit: ${FRAMEWORKS[bestFitFramework].name} (auto-selected)`
+                  : "Structure your prompt using proven frameworks"}
               </div>
             </div>
             <svg
@@ -149,7 +184,7 @@ export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerPr
           {showFrameworks && (
             <div className="mt-3 space-y-2">
               <div className="grid grid-cols-2 gap-2">
-                {Object.entries(FRAMEWORKS).map(([key, framework]) => {
+                {Object.entries(FRAMEWORKS).map(([key, framework]: [string, typeof FRAMEWORKS[keyof typeof FRAMEWORKS]]) => {
                   const isSelected = selectedFramework === key
                   return (
                     <button
@@ -197,7 +232,7 @@ export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerPr
                     {frameworkPrompt}
                   </div>
                   <div className="text-xs text-gray-500 mt-2 italic">
-                    This structured prompt will be optimized when you click "Optimize Prompt"
+                    This structured prompt will be used when you click "Analyze Prompt"
                   </div>
                 </div>
               )}
@@ -210,6 +245,34 @@ export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerPr
                   Clear framework selection
                 </button>
               )}
+
+              {/* Explanation of Best Fit Selection */}
+              <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <details className="cursor-pointer">
+                  <summary className="text-xs font-semibold text-blue-800 flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    How is "Best Fit" determined?
+                  </summary>
+                  <div className="mt-2 text-xs text-blue-700 space-y-2">
+                    <p className="font-medium">Our AI analyzes your prompt and scores each framework based on:</p>
+                    <ul className="list-disc list-inside space-y-1 ml-2">
+                      <li><strong>CoT (Chain of Thought):</strong> +30 for reasoning words (how, why, explain, calculate, solve), +20 for math terms</li>
+                      <li><strong>ToT (Tree of Thoughts):</strong> +30 for planning words (plan, strategy, option, compare, choose)</li>
+                      <li><strong>APE:</strong> +25 for action words (create, write, make, generate), +15 for short prompts</li>
+                      <li><strong>RACE:</strong> +30 for analysis words (analyze, research, study, examine, investigate)</li>
+                      <li><strong>ROSES:</strong> +30 for structured output words (report, document, summary, outline, structure)</li>
+                      <li><strong>GUIDE:</strong> +30 for instructional words (guide, tutorial, instructions, how to, steps)</li>
+                      <li><strong>SMART:</strong> +30 for goal words (goal, objective, target, achieve, accomplish)</li>
+                      <li><strong>CREATE:</strong> +30 for creative words (creative, design, imagine, invent), +10 default bonus</li>
+                    </ul>
+                    <p className="text-blue-600 italic mt-2">
+                      The framework with the highest score is automatically selected as "Best Fit". You can always override this by manually selecting a different framework.
+                    </p>
+                  </div>
+                </details>
+              </div>
             </div>
           )}
         </div>
@@ -219,8 +282,8 @@ export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerPr
       <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
         <div className="flex items-center justify-between mb-3">
           <div>
-            <div className="text-sm font-semibold text-gray-800">Rule-Based Optimization</div>
-            <div className="text-xs text-gray-600">Always available - no setup required</div>
+            <div className="text-sm font-semibold text-gray-800">Framework Analysis</div>
+            <div className="text-xs text-gray-600">Automatically finds the best framework for your prompt</div>
           </div>
           <span className="text-xs bg-green-500/20 text-green-700 px-2 py-1 rounded-full backdrop-blur-sm">✓ Active</span>
         </div>
@@ -230,55 +293,29 @@ export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerPr
           </div>
         )}
         {selectedFramework && frameworkPrompt && (
-          <div className="mb-3 p-2 bg-primary-50 border border-primary-200 rounded-md text-xs text-gray-700">
-            <span className="font-semibold">{FRAMEWORKS[selectedFramework].name}</span> framework will be applied before optimization
-            {selectedFramework === "create" && (
-              <span className="text-primary-600 ml-1">(Default)</span>
+          <div className={`mb-3 p-2 border rounded-md text-xs ${
+            bestFitFramework && selectedFramework === bestFitFramework
+              ? "bg-green-50 border-green-200 text-gray-700"
+              : "bg-primary-50 border-primary-200 text-gray-700"
+          }`}>
+            <span className="font-semibold">{FRAMEWORKS[selectedFramework].name}</span> framework selected
+            {bestFitFramework && selectedFramework === bestFitFramework && (
+              <span className="text-green-700 ml-1 font-medium">(Best Fit - Auto-selected)</span>
             )}
-          </div>
-        )}
-        {!selectedFramework && originalPrompt.trim() && (
-          <div className="mb-3 p-2 bg-blue-50 border border-blue-200 rounded-md text-xs text-gray-700">
-            <span className="font-semibold">CREATE</span> framework is used by default. You can change it in the output modal.
+            {!bestFitFramework || selectedFramework !== bestFitFramework ? (
+              <span className="text-gray-600 ml-1">(Manual selection)</span>
+            ) : null}
           </div>
         )}
         <button
-          onClick={handleOptimize}
+          onClick={handleAnalyze}
           disabled={loading || !originalPrompt.trim()}
           className="w-full bg-primary-600 hover:bg-primary-700 disabled:bg-gray-300 text-white font-medium py-2.5 px-4 rounded-md transition-colors shadow-sm hover:shadow disabled:shadow-none disabled:cursor-not-allowed"
         >
-          {loading ? "Optimizing..." : selectedFramework ? `Optimize with ${FRAMEWORKS[selectedFramework].name.split(" ")[0]}` : "Optimize Prompt (CREATE default)"}
+          {loading ? "Analyzing..." : selectedFramework ? `Analyze with ${FRAMEWORKS[selectedFramework].name.split(" ")[0]}` : "Analyze Prompt"}
         </button>
       </div>
 
-      {/* Smart Feature - Optional Ollama - WIP - Material Design */}
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 shadow-sm opacity-75">
-        <div className="flex items-center justify-between mb-2">
-          <div>
-            <div className="text-sm font-semibold text-gray-600 flex items-center gap-2">
-              Smart ML Optimization
-              <span className="text-xs bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded-full backdrop-blur-sm font-medium">
-                WIP
-              </span>
-            </div>
-            <div className="text-xs text-gray-500 italic">
-              Coming soon: AI-powered optimization that's smarter than a bag of hammers
-            </div>
-          </div>
-          <span className="text-xs bg-gray-300/40 text-gray-600 px-2 py-1 rounded-full backdrop-blur-sm">
-            🚧 Under Construction
-          </span>
-        </div>
-        
-        <div className="mt-2 p-2 bg-yellow-50/50 border border-yellow-200/30 rounded text-xs text-gray-600">
-          <p className="font-medium text-yellow-800 mb-1">💡 What's cooking?</p>
-          <p>
-            We're training our AI models to be prompt optimization ninjas. 
-            For now, our rule-based optimizer is doing the heavy lifting (and it's pretty good at it!).
-            Check back soon for ML-powered magic ✨
-          </p>
-        </div>
-      </div>
 
       {error && (
         <div className="backdrop-blur-md bg-red-500/10 border border-red-300/30 text-red-700 px-3 py-2 rounded-lg text-sm shadow-md">
@@ -286,13 +323,13 @@ export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerPr
         </div>
       )}
 
-      {/* Modal for optimized prompt */}
-      {showModal && optimized && (
+      {/* Modal for analyzed prompt */}
+      {showModal && analyzed && (
         <OptimizedPromptModal
-          optimized={optimized}
+          optimized={analyzed}
           originalPrompt={originalPrompt}
-          currentFramework={selectedFramework || "create"}
-          stats={optimizationStats || undefined}
+          currentFramework={selectedFramework || bestFitFramework || "create"}
+          stats={analysisStats || undefined}
           onClose={() => setShowModal(false)}
         />
       )}

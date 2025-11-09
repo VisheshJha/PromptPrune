@@ -3,8 +3,6 @@
  * Uses approximation based on character count
  */
 
-import { get_encoding } from "js-tiktoken"
-
 export interface TokenCount {
   count: number
   model: string
@@ -19,8 +17,11 @@ export async function countLlamaTokens(
   model: string = "llama-3-70b"
 ): Promise<number> {
   try {
+    // Use dynamic import to handle potential bundling issues
+    const tiktoken = await import("js-tiktoken")
+    
     // Llama uses SentencePiece, approximate with cl100k_base (close enough)
-    const encoding = get_encoding("cl100k_base")
+    const encoding = tiktoken.get_encoding("cl100k_base")
     const tokens = encoding.encode(text)
     // Llama tokenization is slightly different, adjust by ~5%
     return Math.round(tokens.length * 1.05)

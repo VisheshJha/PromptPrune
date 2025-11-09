@@ -1,5 +1,3 @@
-import { get_encoding } from "js-tiktoken"
-
 export interface TokenCount {
   count: number
   model: string
@@ -14,9 +12,12 @@ export async function countGeminiTokens(
   model: string = "gemini-pro"
 ): Promise<number> {
   try {
+    // Use dynamic import to handle potential bundling issues
+    const tiktoken = await import("js-tiktoken")
+    
     // Gemini tokenizer is similar to GPT-3.5, but slightly different
     // This is an approximation
-    const encoding = get_encoding("cl100k_base")
+    const encoding = tiktoken.get_encoding("cl100k_base")
     const tokens = encoding.encode(text)
     const count = tokens.length
     

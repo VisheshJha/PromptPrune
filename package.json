@@ -6,7 +6,7 @@
   "author": "PromptPrune Team",
   "scripts": {
     "dev": "plasmo dev",
-    "build": "plasmo build",
+    "build": "plasmo build && node scripts/fix-manifest.js",
     "package": "plasmo package",
     "share": "npm run build && node scripts/create-share-package.js",
     "test": "vitest",
@@ -32,6 +32,7 @@
     "@vitest/coverage-v8": "^1.1.0",
     "@vitest/ui": "^1.1.0",
     "autoprefixer": "^10.4.16",
+    "glob": "^11.0.3",
     "jsdom": "^23.0.1",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.4.0",

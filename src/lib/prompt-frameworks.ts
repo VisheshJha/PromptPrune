@@ -8,6 +8,9 @@ import {
   extractConstraintsNLP,
   extractIntentWithNLP
 } from "./nlp-enhanced"
+import {
+  processPromptIntelligently
+} from "./intelligent-processor"
 
 export interface FrameworkOutput {
   framework: string
@@ -85,47 +88,113 @@ export const FRAMEWORKS = {
 export type FrameworkType = keyof typeof FRAMEWORKS
 
 /**
+ * Simple text cleaning helper (minimal, since intelligent processor handles most of it)
+ */
+function cleanText(text: string): string {
+  return text
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/**
+ * Generate intelligent, context-aware examples based on task and framework
+ */
+function generateExample(task: string, framework: string): string {
+  if (!task || !task.trim()) {
+    return "A well-structured example that demonstrates the desired output format"
+  }
+  
+  const taskLower = task.toLowerCase()
+  const cleanTask = cleanText(task)
+  
+  // Generate examples based on task type and framework
+  if (taskLower.includes('content') || taskLower.includes('article') || taskLower.includes('blog')) {
+    if (framework === "ROSES") {
+      return `A well-structured article with clear sections, engaging introduction, informative body, and strong conclusion about ${cleanTask.split(/[.!?]/)[0].substring(0, 50)}`
+    } else if (framework === "GUIDE") {
+      return `Step-by-step guide with clear headings, practical tips, and actionable advice for ${cleanTask.split(/[.!?]/)[0].substring(0, 50)}`
+    } else if (framework === "CREATE") {
+      return `A comprehensive piece that covers all aspects of ${cleanTask.split(/[.!?]/)[0].substring(0, 50)} with engaging narrative and clear structure`
+    }
+  } else if (taskLower.includes('report') || taskLower.includes('analysis')) {
+    return `A detailed report with executive summary, key findings, data analysis, and recommendations for ${cleanTask.split(/[.!?]/)[0].substring(0, 50)}`
+  } else if (taskLower.includes('code') || taskLower.includes('program')) {
+    return `A clean, well-documented code example that solves ${cleanTask.split(/[.!?]/)[0].substring(0, 50)} with proper error handling and comments`
+  } else if (taskLower.includes('email') || taskLower.includes('message')) {
+    return `A professional, concise message that clearly communicates ${cleanTask.split(/[.!?]/)[0].substring(0, 50)} with appropriate tone and structure`
+  } else if (taskLower.includes('summary') || taskLower.includes('summary')) {
+    return `A concise summary highlighting key points and main takeaways from ${cleanTask.split(/[.!?]/)[0].substring(0, 50)}`
+  }
+  
+  // Default example
+  return `A high-quality example that demonstrates best practices for ${cleanTask.split(/[.!?]/)[0].substring(0, 80)}`
+}
+
+/**
  * Parse a prompt to extract key components using NLP
  */
 function parsePrompt(prompt: string): ParsedPrompt {
-  const lower = prompt.toLowerCase()
+  // Use intelligent processor first
+  const processed = processPromptIntelligently(prompt)
+  
+  // Use the corrected and structured version
+  const expanded = processed.structured || processed.corrected
+  const cleanedPrompt = processed.corrected
+  const lower = cleanedPrompt.toLowerCase()
   
   // Extract role using NLP
-  const role = extractRoleNLP(prompt) || undefined
+  const role = extractRoleNLP(cleanedPrompt) || undefined
   
-  // Extract task/action using NLP
-  const intent = extractIntentWithNLP(prompt)
-  const action = intent.action
-  const taskMatch = prompt.match(new RegExp(`(${intent.verbs.join("|")})\\s+([^.,!?\n]+)`, "i"))
-  const task = taskMatch ? taskMatch[2].trim() : intent.subject || prompt.split(/[.!?]/)[0].trim()
+  // Use intelligent intent extraction
+  const intelligentIntent = processed.intent
+  const action = intelligentIntent.action
+  const topic = intelligentIntent.topic
+  
+  // Build task from intent
+  let task = ''
+  if (topic && !topic.toLowerCase().includes('specified topic')) {
+    task = `${action} about ${topic}`
+  } else {
+    // Fallback to NLP extraction
+    const intent = extractIntentWithNLP(cleanedPrompt)
+    const topicMatch = cleanedPrompt.match(/(?:about|on)\s+([^.,!?\n]+?)(?:\s+for|\s+to|$)/i)
+    if (topicMatch && topicMatch[1]) {
+      task = `${action} about ${topicMatch[1].trim()}`
+    } else {
+      task = intent.subject || `${action} about the specified topic`
+    }
+  }
+  
+  // Task is already cleaned by intelligent processor, just normalize spacing
+  task = cleanText(task)
   
   // Extract context
-  const contextMatch = prompt.match(/(?:context:|background:|given that|considering)\s+([^.,!?\n]+)/i)
+  const contextMatch = cleanedPrompt.match(/(?:context:|background:|given that|considering)\s+([^.,!?\n]+)/i)
   const context = contextMatch ? contextMatch[1].trim() : undefined
   
   // Extract constraints using NLP
-  const nlpConstraints = extractConstraintsNLP(prompt)
+  const nlpConstraints = extractConstraintsNLP(cleanedPrompt)
   const constraints = nlpConstraints.wordCount || nlpConstraints.style || nlpConstraints.format
     ? `Word count: ${nlpConstraints.wordCount || "not specified"}, Style: ${nlpConstraints.style || nlpConstraints.tone || "not specified"}, Format: ${nlpConstraints.format || "not specified"}`
     : undefined
   
   // Extract expected output
-  const outputMatch = prompt.match(/(?:output:|result:|should be|must be|format:)\s+([^.,!?\n]+)/i)
+  const outputMatch = cleanedPrompt.match(/(?:output:|result:|should be|must be|format:)\s+([^.,!?\n]+)/i)
   const expectedOutput = outputMatch ? outputMatch[1].trim() : undefined
   
   // Extract style using NLP
-  const nlpConstraintsForStyle = extractConstraintsNLP(prompt)
+  const nlpConstraintsForStyle = extractConstraintsNLP(cleanedPrompt)
   const style = nlpConstraintsForStyle.tone || nlpConstraintsForStyle.style || (() => {
-    const styleMatch = prompt.match(/(?:tone:|style:|tone of|style of)\s+([^.,!?\n]+)/i)
+    const styleMatch = cleanedPrompt.match(/(?:tone:|style:|tone of|style of)\s+([^.,!?\n]+)/i)
     return styleMatch ? styleMatch[1].trim() : undefined
   })()
-  
+
   // Extract examples
-  const exampleMatch = prompt.match(/(?:example:|for example|e\.g\.|such as)\s+([^.,!?\n]+)/i)
+  const exampleMatch = cleanedPrompt.match(/(?:example:|for example|e\.g\.|such as)\s+([^.,!?\n]+)/i)
   const examples = exampleMatch ? [exampleMatch[1].trim()] : undefined
-  
+
   return {
-    intent: prompt,
+    intent: cleanedPrompt, // Use cleaned prompt
     task,
     context,
     constraints,
@@ -142,7 +211,9 @@ function parsePrompt(prompt: string): ParsedPrompt {
 function applyCoT(parsed: ParsedPrompt): string {
   const parts: string[] = []
   
-  parts.push(`Task: ${parsed.task || parsed.intent}`)
+  // Use the corrected task (already processed by intelligent processor)
+  const cleanTask = parsed.task || parsed.intent.split(/[.!?]/)[0].trim()
+  parts.push(`Task: ${cleanTask}`)
   
   if (parsed.context) {
     parts.push(`Context: ${parsed.context}`)
@@ -172,16 +243,34 @@ function applyCoT(parsed: ParsedPrompt): string {
 function applyToT(parsed: ParsedPrompt): string {
   const parts: string[] = []
   
-  parts.push(`Problem: ${parsed.task || parsed.intent}`)
+  // Use the corrected task (already processed by intelligent processor)
+  const cleanTask = parsed.task || parsed.intent.split(/[.!?]/)[0].trim()
+  parts.push(`Problem: ${cleanTask}`)
   
   if (parsed.context) {
     parts.push(`Context: ${parsed.context}`)
   }
   
+  // Generate intelligent approaches based on task
+  const taskLower = cleanTask.toLowerCase()
+  let approach1 = "Direct approach focusing on core requirements"
+  let approach2 = "Alternative method considering different perspectives"
+  let approach3 = "Creative solution exploring innovative methods"
+  
+  if (taskLower.includes('content') || taskLower.includes('write')) {
+    approach1 = "Structured approach: outline → draft → refine"
+    approach2 = "Narrative approach: storytelling with engaging elements"
+    approach3 = "Data-driven approach: research → analysis → synthesis"
+  } else if (taskLower.includes('solve') || taskLower.includes('problem')) {
+    approach1 = "Analytical approach: break down into components"
+    approach2 = "Creative approach: brainstorm innovative solutions"
+    approach3 = "Systematic approach: follow proven methodology"
+  }
+  
   parts.push("\nExplore multiple approaches:")
-  parts.push("Approach 1: [First potential solution path]")
-  parts.push("Approach 2: [Alternative solution path]")
-  parts.push("Approach 3: [Another creative approach]")
+  parts.push(`Approach 1: ${approach1}`)
+  parts.push(`Approach 2: ${approach2}`)
+  parts.push(`Approach 3: ${approach3}`)
   parts.push("\nEvaluate each approach:")
   parts.push("- Pros and cons of each path")
   parts.push("- Feasibility and effectiveness")
@@ -200,16 +289,38 @@ function applyToT(parsed: ParsedPrompt): string {
 function applyAPE(parsed: ParsedPrompt): string {
   const parts: string[] = []
   
-  // Action
-  const action = parsed.task || parsed.intent.split(/[.!?]/)[0]
-  parts.push(`Action: ${action}`)
+  // Use the corrected task (already processed by intelligent processor)
+  const cleanTask = parsed.task || parsed.intent.split(/[.!?]/)[0].trim()
+  parts.push(`Action: ${cleanTask}`)
   
-  // Purpose
-  const purpose = parsed.context || "To achieve the desired outcome"
+  // Purpose - make it more specific
+  let purpose = parsed.context
+  if (!purpose) {
+    const taskLower = cleanTask.toLowerCase()
+    if (taskLower.includes('content') || taskLower.includes('article')) {
+      purpose = "To inform and engage readers with valuable information"
+    } else if (taskLower.includes('report') || taskLower.includes('analysis')) {
+      purpose = "To provide comprehensive analysis and actionable insights"
+    } else if (taskLower.includes('guide') || taskLower.includes('tutorial')) {
+      purpose = "To educate and enable readers to accomplish a specific task"
+    } else {
+      purpose = "To achieve the desired outcome effectively"
+    }
+  }
   parts.push(`Purpose: ${purpose}`)
   
-  // Expectation
-  const expectation = parsed.expectedOutput || "A clear, complete result"
+  // Expectation - make it more specific
+  let expectation = parsed.expectedOutput
+  if (!expectation) {
+    const taskLower = cleanTask.toLowerCase()
+    if (taskLower.includes('content') || taskLower.includes('article')) {
+      expectation = "A well-structured, engaging piece that meets quality standards"
+    } else if (taskLower.includes('report')) {
+      expectation = "A comprehensive report with clear findings and recommendations"
+    } else {
+      expectation = "A clear, complete result that fulfills all requirements"
+    }
+  }
   parts.push(`Expectation: ${expectation}`)
   
   if (parsed.constraints) {
@@ -225,20 +336,52 @@ function applyAPE(parsed: ParsedPrompt): string {
 function applyRACE(parsed: ParsedPrompt): string {
   const parts: string[] = []
   
-  // Role
-  const role = parsed.role || "Expert"
+  // Role - infer from task if not provided
+  let role = parsed.role
+  if (!role) {
+    const taskLower = (parsed.task || parsed.intent).toLowerCase()
+    if (taskLower.includes('content') || taskLower.includes('article') || taskLower.includes('blog')) {
+      role = "Content Writer"
+    } else if (taskLower.includes('report') || taskLower.includes('analysis')) {
+      role = "Business Analyst"
+    } else if (taskLower.includes('code') || taskLower.includes('program')) {
+      role = "Software Engineer"
+    } else {
+      role = "Expert"
+    }
+  }
   parts.push(`Role: You are ${role}`)
   
-  // Action
-  const action = parsed.task || parsed.intent.split(/[.!?]/)[0]
-  parts.push(`Action: ${action}`)
+  // Use the corrected task (already processed by intelligent processor)
+  const cleanTask = parsed.task || parsed.intent.split(/[.!?]/)[0].trim()
+  parts.push(`Action: ${cleanTask}`)
   
-  // Context
-  const context = parsed.context || "Standard professional context"
+  // Context - make it more specific
+  let context = parsed.context
+  if (!context) {
+    const taskLower = cleanTask.toLowerCase()
+    if (taskLower.includes('content') || taskLower.includes('article')) {
+      context = "Creating content for a general audience seeking information"
+    } else if (taskLower.includes('report')) {
+      context = "Professional business context requiring structured analysis"
+    } else {
+      context = "Standard professional context"
+    }
+  }
   parts.push(`Context: ${context}`)
   
-  // Expectation
-  const expectation = parsed.expectedOutput || "High-quality, professional output"
+  // Expectation - make it more specific
+  let expectation = parsed.expectedOutput
+  if (!expectation) {
+    const taskLower = cleanTask.toLowerCase()
+    if (taskLower.includes('content') || taskLower.includes('article')) {
+      expectation = "High-quality, well-structured content that engages and informs"
+    } else if (taskLower.includes('report')) {
+      expectation = "Comprehensive report with clear structure, data analysis, and recommendations"
+    } else {
+      expectation = "High-quality, professional output that meets all requirements"
+    }
+  }
   parts.push(`Expectation: ${expectation}`)
   
   if (parsed.constraints) {
@@ -258,7 +401,7 @@ function applyROSES(parsed: ParsedPrompt): string {
   const role = parsed.role || "Content Creator"
   parts.push(`Role: You are ${role}`)
   
-  // Objective
+  // Objective - use the corrected task
   const objective = parsed.task || parsed.intent.split(/[.!?]/)[0]
   parts.push(`Objective: ${objective}`)
   
@@ -266,11 +409,12 @@ function applyROSES(parsed: ParsedPrompt): string {
   const style = parsed.style || "Professional and engaging"
   parts.push(`Style: ${style}`)
   
-  // Example
+  // Example - generate intelligent example if missing
   if (parsed.examples && parsed.examples.length > 0) {
     parts.push(`Example: ${parsed.examples[0]}`)
   } else {
-    parts.push(`Example: [Provide a sample of the desired output]`)
+    const example = generateExample(parsed.task || parsed.intent, "ROSES")
+    parts.push(`Example: ${example}`)
   }
   
   // Scope
@@ -286,7 +430,7 @@ function applyROSES(parsed: ParsedPrompt): string {
 function applyGUIDE(parsed: ParsedPrompt): string {
   const parts: string[] = []
   
-  // Goal
+  // Goal - use the corrected task
   const goal = parsed.task || parsed.intent.split(/[.!?]/)[0]
   parts.push(`Goal: ${goal}`)
   
@@ -305,12 +449,16 @@ function applyGUIDE(parsed: ParsedPrompt): string {
     parts.push(`\nDetails: ${parsed.context}`)
   }
   
-  // Examples
+  // Examples - generate if missing
   if (parsed.examples && parsed.examples.length > 0) {
     parts.push(`\nExamples:`)
     parsed.examples.forEach((ex, i) => {
       parts.push(`${i + 1}. ${ex}`)
     })
+  } else {
+    const example = generateExample(parsed.task || parsed.intent, "GUIDE")
+    parts.push(`\nExamples:`)
+    parts.push(`1. ${example}`)
   }
   
   if (parsed.constraints) {
@@ -338,7 +486,7 @@ function applyCREATE(parsed: ParsedPrompt): string {
   const expectation = parsed.expectedOutput || "High-quality, complete output"
   parts.push(`Expectation: ${expectation}`)
   
-  // Action
+  // Action - use the corrected task
   const action = parsed.task || parsed.intent.split(/[.!?]/)[0]
   parts.push(`Action: ${action}`)
   
@@ -346,14 +494,16 @@ function applyCREATE(parsed: ParsedPrompt): string {
   const tone = parsed.style || "Professional and clear"
   parts.push(`Tone: ${tone}`)
   
-  // Examples
+  // Examples - generate if missing
   if (parsed.examples && parsed.examples.length > 0) {
     parts.push(`Examples:`)
     parsed.examples.forEach((ex, i) => {
       parts.push(`${i + 1}. ${ex}`)
     })
   } else {
-    parts.push(`Examples: [Provide relevant examples]`)
+    const example = generateExample(parsed.task || parsed.intent, "CREATE")
+    parts.push(`Examples:`)
+    parts.push(`1. ${example}`)
   }
   
   if (parsed.constraints) {
@@ -369,6 +519,7 @@ function applyCREATE(parsed: ParsedPrompt): string {
 function applySMART(parsed: ParsedPrompt): string {
   const parts: string[] = []
   
+  // Goal - use the corrected task
   const goal = parsed.task || parsed.intent.split(/[.!?]/)[0]
   
   parts.push(`Goal: ${goal}`)
@@ -449,5 +600,112 @@ export function getAllFrameworkOutputs(prompt: string): FrameworkOutput[] {
   return Object.keys(FRAMEWORKS).map((key) =>
     applyFramework(prompt, key as FrameworkType)
   )
+}
+
+/**
+ * Rank frameworks by how well they fit a prompt
+ * Returns frameworks sorted by relevance score (highest first)
+ */
+export function rankFrameworks(prompt: string): Array<{ framework: FrameworkType; score: number; output: FrameworkOutput }> {
+  // Use intelligent processor for better analysis
+  const processed = processPromptIntelligently(prompt)
+  const cleanedPrompt = processed.corrected
+  const lowerPrompt = cleanedPrompt.toLowerCase()
+  
+  const rankings: Array<{ framework: FrameworkType; score: number; output: FrameworkOutput }> = []
+
+  // Detect task type for better scoring
+  const isContentCreation = lowerPrompt.match(/\b(write|create|make|generate|content|article|blog|post|piece|story|narrative)\b/)
+  const isReport = lowerPrompt.match(/\b(report|document|analysis|summary|outline|presentation)\b/)
+  const isReasoning = lowerPrompt.match(/\b(how|why|explain|reason|think|calculate|solve|step)\b/)
+  const isMath = lowerPrompt.match(/\b(math|number|calculate|formula|equation|compute)\b/)
+  const isProfessional = lowerPrompt.match(/\b(professional|business|corporate|executive|client|stakeholder)\b/)
+  const isInstruction = lowerPrompt.match(/\b(guide|tutorial|instructions|how to|steps|teach|learn)\b/)
+
+  for (const [key, framework] of Object.entries(FRAMEWORKS)) {
+    try {
+      const output = applyFramework(prompt, key as FrameworkType)
+      let score = 0
+
+      // ROSES: Best for content creation, articles, reports, structured content
+      if (key === "roses") {
+        if (isContentCreation) score += 40 // High priority for content
+        if (isReport) score += 35 // Also great for reports
+        if (lowerPrompt.match(/\b(report|document|summary|outline|structure|article|blog|content)\b/)) score += 30
+        if (lowerPrompt.match(/\b(section|format|organize|presentation)\b/)) score += 20
+        // Penalize for reasoning tasks
+        if (isReasoning && !isContentCreation) score -= 15
+      }
+
+      // RACE: Best for professional, structured outputs, reports
+      if (key === "race") {
+        if (isProfessional) score += 35 // High for professional contexts
+        if (isReport) score += 30 // Great for reports
+        if (lowerPrompt.match(/\b(analyze|research|study|examine|investigate|professional|business)\b/)) score += 25
+        if (lowerPrompt.match(/\b(evidence|data|findings|research|corporate)\b/)) score += 20
+        // Good for content creation too
+        if (isContentCreation) score += 15
+      }
+
+      // CoT: Good for reasoning, math, step-by-step (but NOT content creation)
+      if (key === "cot") {
+        if (isReasoning && !isContentCreation) score += 35 // High for reasoning
+        if (isMath) score += 30 // Very high for math
+        if (lowerPrompt.match(/\b(how|why|explain|step|calculate|solve|reason)\b/)) score += 25
+        if (lowerPrompt.match(/\b(math|number|calculate|formula|equation)\b/)) score += 20
+        if (lowerPrompt.match(/\b(think|reason|logic|process)\b/)) score += 15
+        // Penalize for content creation tasks
+        if (isContentCreation && !isReasoning) score -= 20
+      }
+
+      // ToT: Good for planning, strategy, multiple options
+      if (key === "tot") {
+        if (lowerPrompt.match(/\b(plan|strategy|option|alternative|compare|choose|decision)\b/)) score += 30
+        if (lowerPrompt.match(/\b(decision|select|best|evaluate|multiple|paths)\b/)) score += 20
+        // Penalize for simple content creation
+        if (isContentCreation && !lowerPrompt.match(/\b(plan|strategy|option)\b/)) score -= 10
+      }
+
+      // APE: Good for quick, practical tasks
+      if (key === "ape") {
+        if (lowerPrompt.match(/\b(create|write|make|generate|build)\b/)) score += 25
+        if (prompt.length < 200) score += 15 // Short prompts
+        // Less ideal for complex content
+        if (isReport && prompt.length > 300) score -= 10
+      }
+
+      // GUIDE: Good for instructions, tutorials
+      if (key === "guide") {
+        if (isInstruction) score += 35 // High for instructional content
+        if (lowerPrompt.match(/\b(guide|tutorial|instructions|how to|steps)\b/)) score += 30
+        if (lowerPrompt.match(/\b(teach|explain|show|demonstrate|learn)\b/)) score += 20
+        // Less ideal for pure content creation
+        if (isContentCreation && !isInstruction) score -= 10
+      }
+
+      // SMART: Good for goal-oriented prompts
+      if (key === "smart") {
+        if (lowerPrompt.match(/\b(goal|objective|target|achieve|accomplish)\b/)) score += 30
+        if (lowerPrompt.match(/\b(measure|success|result|outcome|metric)\b/)) score += 20
+        // Less ideal for simple content creation
+        if (isContentCreation && !lowerPrompt.match(/\b(goal|objective|target)\b/)) score -= 10
+      }
+
+      // CREATE: Good for creative tasks (default gets small bonus)
+      if (key === "create") {
+        if (lowerPrompt.match(/\b(creative|design|imagine|invent|artistic)\b/)) score += 30
+        if (isContentCreation) score += 20 // Good for content
+        if (lowerPrompt.match(/\b(write|story|poem|content|generate)\b/)) score += 15
+        score += 5 // Small default bonus (reduced from 10)
+      }
+
+      rankings.push({ framework: key as FrameworkType, score, output })
+    } catch (error) {
+      console.error(`PromptPrune: Error ranking ${key}:`, error)
+    }
+  }
+
+  // Sort by score (highest first)
+  return rankings.sort((a, b) => b.score - a.score)
 }
 

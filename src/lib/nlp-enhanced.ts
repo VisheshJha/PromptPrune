@@ -16,8 +16,9 @@ export function spellCheckAndFix(text: string): {
   const corrections: Array<{ original: string; corrected: string; position: number }> = []
   let corrected = text
   
-  // Common misspellings dictionary
+  // Common misspellings and text-speak dictionary
   const commonMisspellings: Record<string, string> = {
+    // Common typos
     "od": "of",
     "whihc": "which",
     "teh": "the",
@@ -41,7 +42,46 @@ export function spellCheckAndFix(text: string): {
     "occurence": "occurrence",
     "existant": "existent",
     "seperation": "separation",
-    "titanic": "titanic", // Keep proper nouns
+    // Text-speak and abbreviations
+    "plz": "please",
+    "pls": "please",
+    "u": "you",
+    "ur": "your",
+    "yr": "your",
+    "thru": "through",
+    "thx": "thanks",
+    "ty": "thank you",
+    "np": "no problem",
+    "lol": "laughing out loud",
+    "omg": "oh my god",
+    "btw": "by the way",
+    "fyi": "for your information",
+    "asap": "as soon as possible",
+    "imo": "in my opinion",
+    "tbh": "to be honest",
+    "idk": "I don't know",
+    "wrt": "with regard to",
+    "w/": "with",
+    "w/o": "without",
+    // Common misspellings
+    "wrte": "write",
+    "writng": "writing",
+    "writ": "write",
+    "abt": "about",
+    "abut": "about",
+    "gud": "good",
+    "contnt": "content",
+    "contant": "content",
+    "contnet": "content",
+    "tech": "technology",
+    "ai": "AI",
+    "robots": "robotics",
+    "robot": "robotics",
+    "stuff": "topics",
+    "things": "topics",
+    "make": "create",
+    "not boring": "engaging",
+    "boring": "engaging",
   }
   
   // Use compromise to detect potential spelling issues

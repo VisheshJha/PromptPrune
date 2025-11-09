@@ -20,9 +20,9 @@ import {
   mergeSentencesNLP,
   improveClarityNLP,
   extractRoleNLP,
-  extractConstraintsNLP,
-  spellCheckAndFix
+  extractConstraintsNLP
 } from "./nlp-enhanced"
+import { intelligentSpellCheck } from "./intelligent-processor"
 
 interface ParsedIntent {
   goal: string
@@ -887,8 +887,8 @@ export function optimizePrompt(prompt: string): OptimizationResult {
     }
   }
   
-  // Step 0: Fix spelling mistakes using NLP
-  const spellCheck = spellCheckAndFix(prompt)
+  // Step 0: Fix spelling mistakes using intelligent processor
+  const spellCheck = intelligentSpellCheck(prompt)
   let workingPrompt = spellCheck.corrected
   if (spellCheck.corrections.length > 0) {
     techniques.push(`Fixed ${spellCheck.corrections.length} spelling mistake${spellCheck.corrections.length > 1 ? 's' : ''}`)

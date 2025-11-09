@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react"
 import { applyFramework, FRAMEWORKS, type FrameworkType } from "~/lib/prompt-frameworks"
-import { optimizePrompt } from "~/lib/optimizer"
 
 interface OptimizedPromptModalProps {
   optimized: string
@@ -25,13 +24,12 @@ export function OptimizedPromptModal({
   const [selectedFramework, setSelectedFramework] = useState<FrameworkType>(currentFramework)
   const [frameworkOptimized, setFrameworkOptimized] = useState<string>(optimized)
 
-  // Update framework output when framework changes and optimize it
+  // Update framework output when framework changes
   useEffect(() => {
     if (originalPrompt.trim()) {
       const frameworkOutput = applyFramework(originalPrompt, selectedFramework)
-      // Optimize the framework-structured prompt
-      const optimized = optimizePrompt(frameworkOutput.optimized)
-      setFrameworkOptimized(optimized.optimized)
+      // Use the framework output directly (already processed and corrected)
+      setFrameworkOptimized(frameworkOutput.optimized)
     }
   }, [selectedFramework, originalPrompt])
 
@@ -77,7 +75,7 @@ export function OptimizedPromptModal({
         {/* Header - Material Design */}
         <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
           <div className="flex-1">
-            <h2 className="text-xl font-normal text-gray-900">Optimized Prompt</h2>
+            <h2 className="text-xl font-normal text-gray-900">Analyzed Prompt</h2>
             <div className="flex items-center gap-3 mt-2">
               {stats && (
                 <p className="text-xs text-gray-600">

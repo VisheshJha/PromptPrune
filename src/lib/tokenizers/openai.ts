@@ -1,5 +1,3 @@
-import { encoding_for_model, get_encoding } from "js-tiktoken"
-
 export interface TokenCount {
   count: number
   model: string
@@ -13,6 +11,9 @@ export async function countOpenAITokens(
   model: string = "gpt-4"
 ): Promise<number> {
   try {
+    // Use dynamic import to handle potential bundling issues
+    const tiktoken = await import("js-tiktoken")
+    
     // Map model names to tiktoken encodings
     const modelMap: Record<string, string> = {
       "gpt-4": "gpt-4",
@@ -24,10 +25,10 @@ export async function countOpenAITokens(
     const encodingModel = modelMap[model] || "gpt-4"
     let encoding
     try {
-      encoding = encoding_for_model(encodingModel as any)
+      encoding = tiktoken.encoding_for_model(encodingModel as any)
     } catch {
       // Fallback to cl100k_base encoding if model not found
-      encoding = get_encoding("cl100k_base")
+      encoding = tiktoken.get_encoding("cl100k_base")
     }
     
     const tokens = encoding.encode(text)

@@ -3,8 +3,6 @@
  * Uses approximation based on character count
  */
 
-import { get_encoding } from "js-tiktoken"
-
 export interface TokenCount {
   count: number
   model: string
@@ -19,8 +17,11 @@ export async function countMistralTokens(
   model: string = "mistral-large"
 ): Promise<number> {
   try {
+    // Use dynamic import to handle potential bundling issues
+    const tiktoken = await import("js-tiktoken")
+    
     // Mistral uses similar tokenization, approximate with cl100k_base
-    const encoding = get_encoding("cl100k_base")
+    const encoding = tiktoken.get_encoding("cl100k_base")
     const tokens = encoding.encode(text)
     return tokens.length
   } catch (error) {

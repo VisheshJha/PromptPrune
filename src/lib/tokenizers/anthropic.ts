@@ -1,4 +1,3 @@
-import { get_encoding } from "js-tiktoken"
 
 export interface TokenCount {
   count: number
@@ -17,7 +16,9 @@ export async function countAnthropicTokens(
   try {
     // Anthropic models use a similar tokenizer to GPT-3.5
     // This is an approximation - for production, consider using Anthropic's tokenizer
-    const encoding = get_encoding("cl100k_base")
+    // Use dynamic import to handle potential bundling issues
+    const tiktoken = await import("js-tiktoken")
+    const encoding = tiktoken.get_encoding("cl100k_base")
     const tokens = encoding.encode(text)
     const count = tokens.length
     
