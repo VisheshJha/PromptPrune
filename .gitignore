@@ -1,5 +1,6 @@
 node_modules
 build
+build 2
 .cache
 .env
 *.log
