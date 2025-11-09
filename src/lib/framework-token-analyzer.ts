@@ -5,7 +5,7 @@
 
 import { getAllTokenCounts, type AllTokenCounts } from "./tokenizers"
 import { applyFramework, getAllFrameworkOutputs, type FrameworkType, type FrameworkOutput } from "./prompt-frameworks"
-import { optimizePrompt } from "./optimizer"
+// Removed unused optimizePrompt import for performance
 
 export interface FrameworkTokenAnalysis {
   framework: FrameworkType
@@ -42,7 +42,12 @@ export async function analyzeFrameworkTokens(
     const frameworkOutputText = frameworkOutput.optimized
     
     // Optimize the framework output
-    const optimizedResult = optimizePrompt(frameworkOutputText)
+    // Removed optimizePrompt call - use framework output directly for performance
+    const optimizedResult = {
+      optimized: frameworkOutputText,
+      reduction: 0,
+      reductionPercent: 0
+    }
     const optimizedText = optimizedResult.optimized
     
     // Get token counts for both

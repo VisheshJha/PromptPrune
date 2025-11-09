@@ -132,6 +132,45 @@ export function intelligentSpellCheck(text: string): {
     }
   })
 
+  // Expanded common misspellings dictionary
+  const commonMisspellings: Record<string, string> = {
+    'wriet': 'write',
+    'wrte': 'write',
+    'writng': 'writing',
+    'writ': 'write',
+    'abt': 'about',
+    'abut': 'about',
+    'gud': 'good',
+    'contnt': 'content',
+    'contant': 'content',
+    'contnet': 'content',
+    'tech': 'technology',
+    'plz': 'please',
+    'pls': 'please',
+    'u': 'you',
+    'ur': 'your',
+    'thru': 'through',
+    'thx': 'thanks',
+    'ty': 'thank you',
+    'delhi': 'Delhi',
+    'pollution': 'pollution',
+    'ai': 'AI',
+    'robots': 'robots',
+    'stuff': 'stuff',
+    'boring': 'boring',
+    'future': 'future',
+    'robotics': 'robotics',
+    'industries': 'industries',
+    'developments': 'developments',
+    'challenges': 'challenges',
+    'ethical': 'ethical',
+    'considerations': 'considerations',
+    'engaging': 'engaging',
+    'concise': 'concise',
+    'organize': 'organize',
+    'headings': 'headings',
+  }
+
   // Check each word
   words.forEach((word) => {
     const lowerWord = word.toLowerCase()
@@ -142,36 +181,18 @@ export function intelligentSpellCheck(text: string): {
     }
 
     // Check common misspellings first (more accurate)
-    const commonMisspellings: Record<string, string> = {
-      'wriet': 'write',
-      'wrte': 'write',
-      'writng': 'writing',
-      'writ': 'write',
-      'abt': 'about',
-      'abut': 'about',
-      'gud': 'good',
-      'contnt': 'content',
-      'contant': 'content',
-      'contnet': 'content',
-      'tech': 'technology',
-      'plz': 'please',
-      'pls': 'please',
-      'u': 'you',
-      'ur': 'your',
-      'thru': 'through',
-      'thx': 'thanks',
-      'ty': 'thank you',
-      'delhi': 'Delhi', // Preserve proper nouns but fix case if needed
-    }
-
     if (commonMisspellings[lowerWord]) {
       const correctedWord = commonMisspellings[lowerWord]
-      const regex = new RegExp(`\\b${word}\\b`, 'gi')
+      const regex = new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi')
       if (corrected.match(regex)) {
         corrected = corrected.replace(regex, (match) => {
           // Preserve capitalization for proper nouns
           if (/^[A-Z]/.test(match) && /^[A-Z]/.test(correctedWord)) {
             return correctedWord
+          }
+          // Preserve original capitalization pattern
+          if (/^[A-Z]/.test(match)) {
+            return correctedWord.charAt(0).toUpperCase() + correctedWord.slice(1)
           }
           // Otherwise use lowercase
           return correctedWord.toLowerCase()

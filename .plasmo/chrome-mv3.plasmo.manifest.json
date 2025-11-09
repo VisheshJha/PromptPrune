@@ -24,6 +24,33 @@
   "permissions": [
     "storage"
   ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chat.openai.com/*",
+        "https://chatgpt.com/*",
+        "https://claude.ai/*",
+        "https://gemini.google.com/*",
+        "https://gemini.google.com/app/*",
+        "https://www.perplexity.ai/*",
+        "https://perplexity.ai/*",
+        "https://poe.com/*",
+        "https://grok.com/*",
+        "https://x.com/*",
+        "https://twitter.com/*",
+        "https://copilot.microsoft.com/*",
+        "https://manus.im/*",
+        "https://www.deepseek.com/*",
+        "https://deepseek.com/*",
+        "https://www.midjourney.com/*",
+        "https://midjourney.com/*"
+      ],
+      "js": [
+        "../src/content.ts"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
   "host_permissions": [
     "http://localhost/*",
     "http://127.0.0.1/*"

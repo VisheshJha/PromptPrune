@@ -11,6 +11,12 @@ import {
 import {
   processPromptIntelligently
 } from "./intelligent-processor"
+import {
+  parseStructuredPrompt,
+  convertStructuredToNatural,
+  detectFrameworkFromStructure
+} from "./prompt-parser"
+import { detectFields } from "./field-detector"
 
 export interface FrameworkOutput {
   framework: string
@@ -133,26 +139,72 @@ function generateExample(task: string, framework: string): string {
 /**
  * Parse a prompt to extract key components using NLP
  */
-function parsePrompt(prompt: string): ParsedPrompt {
-  // Use intelligent processor first
-  const processed = processPromptIntelligently(prompt)
+function parsePrompt(prompt: string, isFollowUp: boolean = false): ParsedPrompt {
+  // Check if prompt is in structured format (Role:, Action:, Topic:)
+  const structured = parseStructuredPrompt(prompt)
+  
+  // If structured, convert to natural language for better processing
+  let workingPrompt = prompt
+  if (structured.isStructured) {
+    const natural = convertStructuredToNatural(structured)
+    if (natural) {
+      workingPrompt = natural
+    }
+  }
+  
+  // Use intelligent processor
+  const processed = processPromptIntelligently(workingPrompt)
   
   // Use the corrected and structured version
   const expanded = processed.structured || processed.corrected
   const cleanedPrompt = processed.corrected
   const lower = cleanedPrompt.toLowerCase()
   
-  // Extract role using NLP
-  const role = extractRoleNLP(cleanedPrompt) || undefined
+  // Use detectFields to get structured field information
+  const detectedFields = detectFields(prompt)
   
-  // Use intelligent intent extraction
-  const intelligentIntent = processed.intent
-  const action = intelligentIntent.action
-  const topic = intelligentIntent.topic
+  // Extract role - prefer structured format, then detected fields, then NLP (skip for follow-ups)
+  let role: string | undefined
+  if (!isFollowUp) {
+    if (structured.isStructured && structured.role) {
+      role = structured.role
+    } else if (detectedFields.hasRole && detectedFields.role) {
+      role = detectedFields.role
+    } else {
+      role = extractRoleNLP(cleanedPrompt) || undefined
+    }
+  }
+  
+  // Use structured components if available, otherwise use intelligent intent extraction
+  let action: string
+  let topic: string
+  let format: string | undefined
+  let tone: string | undefined
+  
+  if (structured.isStructured) {
+    action = structured.action || processed.intent.action || "write"
+    topic = structured.topic || processed.intent.topic || "the specified topic"
+    format = structured.format
+    tone = structured.tone
+  } else {
+    const intelligentIntent = processed.intent
+    action = intelligentIntent.action
+    topic = intelligentIntent.topic
+    format = intelligentIntent.format || (detectedFields.hasFormat ? detectedFields.format : undefined)
+    tone = intelligentIntent.tone || (detectedFields.hasTone ? detectedFields.tone : undefined)
+  }
+  
+  // Use detected fields if structured format didn't provide them
+  if (detectedFields.hasTask && detectedFields.task && !structured.isStructured) {
+    action = detectedFields.task
+  }
+  if (detectedFields.hasTopic && detectedFields.topic && !topic) {
+    topic = detectedFields.topic
+  }
   
   // Build task from intent
   let task = ''
-  if (topic && !topic.toLowerCase().includes('specified topic')) {
+  if (topic && !topic.toLowerCase().includes('specified topic') && !topic.toLowerCase().includes('[subject]')) {
     task = `${action} about ${topic}`
   } else {
     // Fallback to NLP extraction
@@ -168,9 +220,16 @@ function parsePrompt(prompt: string): ParsedPrompt {
   // Task is already cleaned by intelligent processor, just normalize spacing
   task = cleanText(task)
   
-  // Extract context
-  const contextMatch = cleanedPrompt.match(/(?:context:|background:|given that|considering)\s+([^.,!?\n]+)/i)
-  const context = contextMatch ? contextMatch[1].trim() : undefined
+  // Extract context - prefer structured format, then detected fields, then regex
+  let context: string | undefined
+  if (structured.isStructured && (structured as any).context) {
+    context = (structured as any).context
+  } else if (detectedFields.hasContext && detectedFields.context) {
+    context = detectedFields.context
+  } else {
+    const contextMatch = cleanedPrompt.match(/(?:context:|background:|given that|considering)\s+([^.,!?\n]+)/i)
+    context = contextMatch ? contextMatch[1].trim() : undefined
+  }
   
   // Extract constraints using NLP
   const nlpConstraints = extractConstraintsNLP(cleanedPrompt)
@@ -182,9 +241,9 @@ function parsePrompt(prompt: string): ParsedPrompt {
   const outputMatch = cleanedPrompt.match(/(?:output:|result:|should be|must be|format:)\s+([^.,!?\n]+)/i)
   const expectedOutput = outputMatch ? outputMatch[1].trim() : undefined
   
-  // Extract style using NLP
+  // Extract style using NLP - prefer structured format, then detected fields, then regex
   const nlpConstraintsForStyle = extractConstraintsNLP(cleanedPrompt)
-  const style = nlpConstraintsForStyle.tone || nlpConstraintsForStyle.style || (() => {
+  const style = tone || nlpConstraintsForStyle.tone || nlpConstraintsForStyle.style || (() => {
     const styleMatch = cleanedPrompt.match(/(?:tone:|style:|tone of|style of)\s+([^.,!?\n]+)/i)
     return styleMatch ? styleMatch[1].trim() : undefined
   })()
@@ -550,9 +609,10 @@ function applySMART(parsed: ParsedPrompt): string {
  */
 export function applyFramework(
   prompt: string,
-  framework: FrameworkType
+  framework: FrameworkType,
+  isFollowUp: boolean = false
 ): FrameworkOutput {
-  const parsed = parsePrompt(prompt)
+  const parsed = parsePrompt(prompt, isFollowUp)
   let optimized = ""
   
   switch (framework) {
@@ -607,6 +667,10 @@ export function getAllFrameworkOutputs(prompt: string): FrameworkOutput[] {
  * Returns frameworks sorted by relevance score (highest first)
  */
 export function rankFrameworks(prompt: string): Array<{ framework: FrameworkType; score: number; output: FrameworkOutput }> {
+  // Check if prompt is in structured format
+  const structured = parseStructuredPrompt(prompt)
+  const frameworkHint = structured.isStructured ? detectFrameworkFromStructure(structured) : null
+  
   // Use intelligent processor for better analysis
   const processed = processPromptIntelligently(prompt)
   const cleanedPrompt = processed.corrected
@@ -621,18 +685,35 @@ export function rankFrameworks(prompt: string): Array<{ framework: FrameworkType
   const isMath = lowerPrompt.match(/\b(math|number|calculate|formula|equation|compute)\b/)
   const isProfessional = lowerPrompt.match(/\b(professional|business|corporate|executive|client|stakeholder)\b/)
   const isInstruction = lowerPrompt.match(/\b(guide|tutorial|instructions|how to|steps|teach|learn)\b/)
+  
+  // Boost scores for preferred frameworks from structured format
+  const frameworkBoosts: Record<string, number> = {}
+  if (frameworkHint) {
+    frameworkHint.preferredFrameworks.forEach(fw => {
+      frameworkBoosts[fw] = (frameworkBoosts[fw] || 0) + 25 // Significant boost
+    })
+  }
 
   for (const [key, framework] of Object.entries(FRAMEWORKS)) {
     try {
       const output = applyFramework(prompt, key as FrameworkType)
       let score = 0
 
+      // Apply structured format boost
+      if (frameworkBoosts[key]) {
+        score += frameworkBoosts[key]
+      }
+      
       // ROSES: Best for content creation, articles, reports, structured content
       if (key === "roses") {
         if (isContentCreation) score += 40 // High priority for content
         if (isReport) score += 35 // Also great for reports
         if (lowerPrompt.match(/\b(report|document|summary|outline|structure|article|blog|content)\b/)) score += 30
         if (lowerPrompt.match(/\b(section|format|organize|presentation)\b/)) score += 20
+        // If structured format has role + format/tone, boost ROSES
+        if (structured.isStructured && structured.role && (structured.format || structured.tone)) {
+          score += 20
+        }
         // Penalize for reasoning tasks
         if (isReasoning && !isContentCreation) score -= 15
       }
@@ -643,6 +724,10 @@ export function rankFrameworks(prompt: string): Array<{ framework: FrameworkType
         if (isReport) score += 30 // Great for reports
         if (lowerPrompt.match(/\b(analyze|research|study|examine|investigate|professional|business)\b/)) score += 25
         if (lowerPrompt.match(/\b(evidence|data|findings|research|corporate)\b/)) score += 20
+        // If structured format has role, boost RACE
+        if (structured.isStructured && structured.role) {
+          score += 20
+        }
         // Good for content creation too
         if (isContentCreation) score += 15
       }
@@ -670,6 +755,10 @@ export function rankFrameworks(prompt: string): Array<{ framework: FrameworkType
       if (key === "ape") {
         if (lowerPrompt.match(/\b(create|write|make|generate|build)\b/)) score += 25
         if (prompt.length < 200) score += 15 // Short prompts
+        // If structured format has clear action + topic, boost APE
+        if (structured.isStructured && structured.action && structured.topic && !structured.role) {
+          score += 15 // APE works well without role requirement
+        }
         // Less ideal for complex content
         if (isReport && prompt.length > 300) score -= 10
       }
@@ -691,11 +780,21 @@ export function rankFrameworks(prompt: string): Array<{ framework: FrameworkType
         if (isContentCreation && !lowerPrompt.match(/\b(goal|objective|target)\b/)) score -= 10
       }
 
-      // CREATE: Good for creative tasks (default gets small bonus)
+      // CREATE: Good for creative tasks and comprehensive structured prompts
       if (key === "create") {
         if (lowerPrompt.match(/\b(creative|design|imagine|invent|artistic)\b/)) score += 30
         if (isContentCreation) score += 20 // Good for content
         if (lowerPrompt.match(/\b(write|story|poem|content|generate)\b/)) score += 15
+        // If structured format has multiple components, boost CREATE
+        if (structured.isStructured) {
+          const componentCount = [
+            structured.role, structured.action, structured.topic,
+            structured.audience, structured.format, structured.tone
+          ].filter(Boolean).length
+          if (componentCount >= 3) {
+            score += 20 // CREATE handles comprehensive prompts well
+          }
+        }
         score += 5 // Small default bonus (reduced from 10)
       }
 

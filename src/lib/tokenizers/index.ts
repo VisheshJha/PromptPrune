@@ -10,7 +10,12 @@ import {
   getTogetherTokenCounts, 
   getFireworksTokenCounts,
   getAzureTokenCounts,
-  getBedrockTokenCounts
+  getBedrockTokenCounts,
+  getGrokTokenCounts,
+  getDeepseekTokenCounts,
+  getCopilotTokenCounts,
+  getManusTokenCounts,
+  getMidjourneyTokenCounts
 } from "./other"
 
 export type Provider = 
@@ -26,6 +31,11 @@ export type Provider =
   | "fireworks" 
   | "azure" 
   | "bedrock"
+  | "grok"
+  | "deepseek"
+  | "copilot"
+  | "manus"
+  | "midjourney"
 
 export interface TokenCount {
   count: number
@@ -46,6 +56,11 @@ export interface AllTokenCounts {
   fireworks: TokenCount[]
   azure: TokenCount[]
   bedrock: TokenCount[]
+  grok?: TokenCount[]
+  deepseek?: TokenCount[]
+  copilot?: TokenCount[]
+  manus?: TokenCount[]
+  midjourney?: TokenCount[]
 }
 
 /**
@@ -65,6 +80,11 @@ export async function getAllTokenCounts(text: string): Promise<AllTokenCounts> {
     fireworks,
     azure,
     bedrock,
+    grok,
+    deepseek,
+    copilot,
+    manus,
+    midjourney,
   ] = await Promise.all([
     getOpenAITokenCounts(text).then((counts) =>
       counts.map((c) => ({ ...c, provider: "openai" as const }))
@@ -102,6 +122,21 @@ export async function getAllTokenCounts(text: string): Promise<AllTokenCounts> {
     getBedrockTokenCounts(text).then((counts) =>
       counts.map((c) => ({ ...c, provider: "bedrock" as const }))
     ),
+    getGrokTokenCounts(text).then((counts) =>
+      counts.map((c) => ({ ...c, provider: "grok" as const }))
+    ).catch(() => []),
+    getDeepseekTokenCounts(text).then((counts) =>
+      counts.map((c) => ({ ...c, provider: "deepseek" as const }))
+    ).catch(() => []),
+    getCopilotTokenCounts(text).then((counts) =>
+      counts.map((c) => ({ ...c, provider: "copilot" as const }))
+    ).catch(() => []),
+    getManusTokenCounts(text).then((counts) =>
+      counts.map((c) => ({ ...c, provider: "manus" as const }))
+    ).catch(() => []),
+    getMidjourneyTokenCounts(text).then((counts) =>
+      counts.map((c) => ({ ...c, provider: "midjourney" as const }))
+    ).catch(() => []),
   ])
 
   return {
@@ -117,6 +152,11 @@ export async function getAllTokenCounts(text: string): Promise<AllTokenCounts> {
     fireworks,
     azure,
     bedrock,
+    grok,
+    deepseek,
+    copilot,
+    manus,
+    midjourney,
   }
 }
 
@@ -137,6 +177,11 @@ export function getAverageTokenCount(counts: AllTokenCounts): number {
     ...counts.fireworks,
     ...counts.azure,
     ...counts.bedrock,
+    ...(counts.grok || []),
+    ...(counts.deepseek || []),
+    ...(counts.copilot || []),
+    ...(counts.manus || []),
+    ...(counts.midjourney || []),
   ].map((c) => c.count)
 
   if (allCounts.length === 0) return 0

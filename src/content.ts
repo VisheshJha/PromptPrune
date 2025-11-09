@@ -7,14 +7,29 @@ import type { PlasmoCSConfig } from "plasmo"
 import { compressPrompt } from "~/lib/prompt-compressor"
 import { applyFramework, rankFrameworks, FRAMEWORKS, type FrameworkType } from "~/lib/prompt-frameworks"
 import { getAllTokenCounts } from "~/lib/tokenizers"
+import { isFollowUpMessage } from "~/lib/prompt-guide"
+import { generateFirstPromptTemplate, generateFollowUpTemplate, shouldPreFillTemplate } from "~/lib/prompt-template"
+import { createFieldButton, positionFieldButton } from "~/content/field-button"
 
 export const config: PlasmoCSConfig = {
   matches: [
     "https://chat.openai.com/*",
+    "https://chatgpt.com/*",
     "https://claude.ai/*",
     "https://gemini.google.com/*",
+    "https://gemini.google.com/app/*",
     "https://www.perplexity.ai/*",
+    "https://perplexity.ai/*",
     "https://poe.com/*",
+    "https://grok.com/*",
+    "https://x.com/*",
+    "https://twitter.com/*",
+    "https://copilot.microsoft.com/*",
+    "https://manus.im/*",
+    "https://www.deepseek.com/*",
+    "https://deepseek.com/*",
+    "https://www.midjourney.com/*",
+    "https://midjourney.com/*",
   ],
   run_at: "document_idle",
 }
@@ -22,29 +37,181 @@ export const config: PlasmoCSConfig = {
 // PromptPrune content script loaded
 
 // Track icons and dropdowns per textarea
-const textAreaIcons = new WeakMap<HTMLTextAreaElement | HTMLDivElement, HTMLElement>()
-const textAreaDropdowns = new WeakMap<HTMLTextAreaElement | HTMLDivElement, HTMLElement>()
+const textAreaIcons = new WeakMap<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | HTMLInputElement, HTMLElement>()
+const textAreaDropdowns = new WeakMap<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | HTMLInputElement, HTMLElement>()
+const textAreaFieldButtons = new WeakMap<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | HTMLInputElement, HTMLElement>()
 let frameworkUI: HTMLElement | null = null
 
+// Helper to add element to textareas if valid and not seen
+function addIfValid(
+  el: HTMLElement,
+  textAreas: Array<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement>,
+  seen: WeakSet<HTMLElement>
+): boolean {
+  if (seen.has(el)) return false
+  const rect = el.getBoundingClientRect()
+  if (rect.width > 0 && rect.height > 0 && el.offsetParent !== null) {
+    seen.add(el)
+    textAreas.push(el as HTMLTextAreaElement | HTMLDivElement | HTMLInputElement)
+    return true
+  }
+  return false
+}
+
 // Enhanced platform detection
-function findTextAreas(): Array<HTMLTextAreaElement | HTMLDivElement> {
-  const textAreas: Array<HTMLTextAreaElement | HTMLDivElement> = []
+function findTextAreas(): Array<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement> {
+  const textAreas: Array<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement> = []
+  const seen = new WeakSet<HTMLElement>()
   
-  // ChatGPT - multiple selectors
+  // ChatGPT - multiple selectors (chat.openai.com and chatgpt.com)
   const chatgptSelectors = [
     "#prompt-textarea",
     "textarea[data-id='root']",
     "textarea[placeholder*='Message']",
+    "textarea[placeholder*='message']",
     "textarea[id*='prompt']",
     "textarea[aria-label*='message']",
     "textarea[aria-label*='Message']",
+    "textarea[aria-label*='Ask']",
+    "textarea[data-testid*='textbox']",
+    "textarea[role='textbox']",
+    "div[contenteditable='true'][role='textbox']",
+    "div[contenteditable='true'][data-id]",
+    "textarea",
+    "div[contenteditable='true']",
   ]
   
   for (const selector of chatgptSelectors) {
     const elements = document.querySelectorAll(selector)
     elements.forEach(el => {
-      if (el instanceof HTMLTextAreaElement && !textAreas.includes(el)) {
-        textAreas.push(el)
+      if (el instanceof HTMLTextAreaElement) {
+        addIfValid(el, textAreas, seen)
+      } else if (el instanceof HTMLDivElement && el.isContentEditable) {
+        addIfValid(el, textAreas, seen)
+      }
+    })
+  }
+  
+  // Perplexity - specific selectors
+  const perplexitySelectors = [
+    "textarea[placeholder*='Ask']",
+    "textarea[placeholder*='Search']",
+    "textarea[data-placeholder]",
+    "textarea[aria-label*='Ask']",
+    "div[contenteditable='true'][role='textbox']",
+    "div[contenteditable='true'][data-placeholder]",
+  ]
+  
+  for (const selector of perplexitySelectors) {
+    const elements = document.querySelectorAll(selector)
+    elements.forEach(el => {
+      if (el instanceof HTMLTextAreaElement) {
+        addIfValid(el, textAreas, seen)
+      } else if (el instanceof HTMLDivElement && el.isContentEditable) {
+        addIfValid(el, textAreas, seen)
+      }
+    })
+  }
+  
+  // Grok (x.com/twitter.com)
+  const grokSelectors = [
+    "div[contenteditable='true'][role='textbox']",
+    "div[data-testid*='tweetTextarea']",
+    "div[data-testid*='textInput']",
+    "textarea[placeholder*='What']",
+  ]
+  
+  for (const selector of grokSelectors) {
+    const elements = document.querySelectorAll(selector)
+    elements.forEach(el => {
+      if (el instanceof HTMLDivElement && el.isContentEditable) {
+        addIfValid(el, textAreas, seen)
+      } else if (el instanceof HTMLTextAreaElement) {
+        addIfValid(el, textAreas, seen)
+      }
+    })
+  }
+  
+  // Microsoft Copilot
+  const copilotSelectors = [
+    "textarea[placeholder*='Ask']",
+    "textarea[aria-label*='Ask']",
+    "textarea[aria-label*='ask']",
+    "div[contenteditable='true'][role='textbox']",
+    "div[contenteditable='true'][aria-label*='Ask']",
+    "div[contenteditable='true'][aria-label*='ask']",
+    "textarea[id*='searchbox']",
+    "textarea[id*='input']",
+    "textarea",
+    "div[contenteditable='true']",
+  ]
+  
+  for (const selector of copilotSelectors) {
+    const elements = document.querySelectorAll(selector)
+    elements.forEach(el => {
+      if (el instanceof HTMLTextAreaElement) {
+        addIfValid(el, textAreas, seen)
+      } else if (el instanceof HTMLDivElement && el.isContentEditable) {
+        addIfValid(el, textAreas, seen)
+      }
+    })
+  }
+  
+  // Manus AI
+  const manusSelectors = [
+    "textarea[placeholder*='What']",
+    "textarea[placeholder*='Ask']",
+    "div[contenteditable='true']",
+    "div[role='textbox']",
+  ]
+  
+  for (const selector of manusSelectors) {
+    const elements = document.querySelectorAll(selector)
+    elements.forEach(el => {
+      if (el instanceof HTMLTextAreaElement) {
+        addIfValid(el, textAreas, seen)
+      } else if (el instanceof HTMLDivElement && el.isContentEditable) {
+        addIfValid(el, textAreas, seen)
+      }
+    })
+  }
+  
+  // Deepseek
+  const deepseekSelectors = [
+    "textarea[placeholder*='Ask']",
+    "textarea[placeholder*='Message']",
+    "div[contenteditable='true'][role='textbox']",
+  ]
+  
+  for (const selector of deepseekSelectors) {
+    const elements = document.querySelectorAll(selector)
+    elements.forEach(el => {
+      if (el instanceof HTMLTextAreaElement) {
+        addIfValid(el, textAreas, seen)
+      } else if (el instanceof HTMLDivElement && el.isContentEditable) {
+        addIfValid(el, textAreas, seen)
+      }
+    })
+  }
+  
+  // Midjourney (image generation prompts)
+  const midjourneySelectors = [
+    "textarea[placeholder*='prompt']",
+    "textarea[placeholder*='Prompt']",
+    "input[type='text'][placeholder*='prompt']",
+    "input[type='text'][placeholder*='Prompt']",
+    "div[contenteditable='true'][placeholder*='prompt']",
+  ]
+  
+  for (const selector of midjourneySelectors) {
+    const elements = document.querySelectorAll(selector)
+    elements.forEach(el => {
+      if (el instanceof HTMLTextAreaElement) {
+        addIfValid(el, textAreas, seen)
+      } else if (el instanceof HTMLInputElement) {
+        addIfValid(el, textAreas, seen)
+      } else if (el instanceof HTMLDivElement && el.isContentEditable) {
+        addIfValid(el, textAreas, seen)
       }
     })
   }
@@ -59,32 +226,47 @@ function findTextAreas(): Array<HTMLTextAreaElement | HTMLDivElement> {
   for (const selector of claudeSelectors) {
     const elements = document.querySelectorAll(selector)
     elements.forEach(el => {
-      if (el instanceof HTMLDivElement && el.isContentEditable && !textAreas.includes(el)) {
-        textAreas.push(el)
+      if (el instanceof HTMLDivElement && el.isContentEditable) {
+        addIfValid(el, textAreas, seen)
       }
     })
   }
 
-  // Gemini
-  const geminiElements = document.querySelectorAll("textarea[aria-label*='prompt']")
-  geminiElements.forEach(el => {
-    if (el instanceof HTMLTextAreaElement && !textAreas.includes(el)) {
-      textAreas.push(el)
-    }
-  })
+  // Gemini - expanded selectors
+  const geminiSelectors = [
+    "textarea[aria-label*='prompt']",
+    "textarea[aria-label*='Enter a prompt']",
+    "textarea[placeholder*='Enter a prompt']",
+    "textarea[placeholder*='prompt']",
+    "div[contenteditable='true'][role='textbox']",
+    "div[contenteditable='true'][aria-label*='prompt']",
+    "textarea[id*='input']",
+    "textarea[class*='input']",
+  ]
+  
+  for (const selector of geminiSelectors) {
+    const elements = document.querySelectorAll(selector)
+    elements.forEach(el => {
+      if (el instanceof HTMLTextAreaElement) {
+        addIfValid(el, textAreas, seen)
+      } else if (el instanceof HTMLDivElement && el.isContentEditable) {
+        addIfValid(el, textAreas, seen)
+      }
+    })
+  }
 
   return textAreas
 }
 
-function getText(element: HTMLTextAreaElement | HTMLDivElement): string {
-  if (element instanceof HTMLTextAreaElement) {
+function getText(element: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | HTMLInputElement): string {
+  if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
     return element.value
   }
   return element.innerText || element.textContent || ""
 }
 
-function setText(element: HTMLTextAreaElement | HTMLDivElement, text: string): void {
-  if (element instanceof HTMLTextAreaElement) {
+function setText(element: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | HTMLInputElement, text: string): void {
+  if (element instanceof HTMLTextAreaElement || element instanceof HTMLInputElement) {
     element.value = text
     element.dispatchEvent(new Event("input", { bubbles: true }))
     element.dispatchEvent(new Event("change", { bubbles: true }))
@@ -103,16 +285,19 @@ function setText(element: HTMLTextAreaElement | HTMLDivElement, text: string): v
 }
 
 // Create icon button using Shadow DOM
-function createIconButton(textArea: HTMLTextAreaElement | HTMLDivElement): HTMLElement {
-  // Create shadow host
+function createIconButton(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement): HTMLElement {
+  // Create shadow host with unique ID per textarea
   const shadowHost = document.createElement("div")
-  shadowHost.id = "promptprune-icon-host"
+  shadowHost.id = `promptprune-icon-host-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
   shadowHost.style.cssText = `
-    position: absolute;
-    top: 8px;
-    right: 8px;
+    position: fixed;
     z-index: 10000;
     pointer-events: none;
+    display: none;
+    top: 0;
+    right: 0;
+    left: auto;
+    bottom: auto;
   `
 
   // Create shadow root
@@ -154,16 +339,52 @@ function createIconButton(textArea: HTMLTextAreaElement | HTMLDivElement): HTMLE
   button.className = "icon-button"
   button.textContent = "P"
   button.setAttribute("aria-label", "PromptPrune - Analyze prompt")
-  button.title = "PromptPrune - Click to analyze your prompt"
+  button.title = "PromptPrune - Optimize your prompt"
 
   shadowRoot.appendChild(style)
   shadowRoot.appendChild(button)
+  
+  // Add tooltip on hover for pre-filled template
+  let tooltip: HTMLElement | null = null
+  button.addEventListener("mouseenter", () => {
+    // Check if template was pre-filled
+    const host = shadowHost
+    if (host.getAttribute("data-template-prefilled") === "true") {
+      tooltip = document.createElement("div")
+      tooltip.id = "promptprune-tooltip"
+      tooltip.textContent = "Template pre-filled for better framework analysis"
+      tooltip.style.cssText = `
+        position: fixed;
+        background: rgba(0, 0, 0, 0.85);
+        color: white;
+        padding: 6px 10px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        z-index: 1000002;
+        pointer-events: none;
+        white-space: nowrap;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      `
+      const rect = button.getBoundingClientRect()
+      tooltip.style.top = `${rect.top - 30}px`
+      tooltip.style.left = `${rect.left}px`
+      document.body.appendChild(tooltip)
+    }
+  })
+  
+  button.addEventListener("mouseleave", () => {
+    if (tooltip) {
+      tooltip.remove()
+      tooltip = null
+    }
+  })
 
   return shadowHost
 }
 
 // Create dropdown menu using Shadow DOM
-function createDropdownMenu(textArea: HTMLTextAreaElement | HTMLDivElement): HTMLElement {
+function createDropdownMenu(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement): HTMLElement {
   const shadowHost = document.createElement("div")
   shadowHost.id = "promptprune-dropdown-host"
   shadowHost.style.cssText = `
@@ -256,7 +477,7 @@ function createDropdownMenu(textArea: HTMLTextAreaElement | HTMLDivElement): HTM
 }
 
 // Handle menu actions
-function handleMenuAction(action: string, textArea: HTMLTextAreaElement | HTMLDivElement) {
+function handleMenuAction(action: string, textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement) {
   const text = getText(textArea)
   
   if (!text.trim()) {
@@ -289,19 +510,29 @@ function handleMenuAction(action: string, textArea: HTMLTextAreaElement | HTMLDi
 }
 
 // Analyze with best framework
-function analyzeWithBestFramework(textArea: HTMLTextAreaElement | HTMLDivElement, text: string) {
+function analyzeWithBestFramework(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement, text: string) {
+  // Store original prompt if not already stored
+  if (!originalPrompts.has(textArea)) {
+    originalPrompts.set(textArea, text)
+  }
+  
+  // Always use original prompt for analysis
+  const originalPrompt = originalPrompts.get(textArea) || text
+  
   showNotification("Analyzing...", "info")
   
   setTimeout(() => {
     try {
-      const rankings = rankFrameworks(text)
+      const rankings = rankFrameworks(originalPrompt)
       if (rankings.length === 0) {
         showNotification("Unable to analyze prompt", "error")
         return
       }
 
       const bestFit = rankings[0]
-      const optimized = bestFit.output.optimized
+      // Always apply framework to original prompt
+      const frameworkOutput = applyFramework(originalPrompt, bestFit.framework)
+      const optimized = frameworkOutput.optimized
       setText(textArea, optimized)
       showNotification(`Applied ${FRAMEWORKS[bestFit.framework].name} framework`, "success")
     } catch (error) {
@@ -315,7 +546,7 @@ function analyzeWithBestFramework(textArea: HTMLTextAreaElement | HTMLDivElement
 function detectPlatformAndModel(): { platform: string; model: string } {
   const hostname = window.location.hostname
   
-  if (hostname.includes("openai.com") || hostname.includes("chatgpt.com")) {
+  if (hostname.includes("openai.com") || hostname.includes("chatgpt.com") || hostname.includes("chat.openai.com")) {
     // Try to detect ChatGPT model from page
     const modelElement = document.querySelector('[data-model-id], [data-model], .model-selector, select[aria-label*="model"]')
     let model = "gpt-4"
@@ -348,9 +579,85 @@ function detectPlatformAndModel(): { platform: string; model: string } {
   } else if (hostname.includes("gemini.google.com") || hostname.includes("google.com")) {
     return { platform: "Google", model: "gemini-pro" }
   } else if (hostname.includes("perplexity.ai")) {
-    return { platform: "Perplexity", model: "pplx-70b-online" }
+    // Try to detect Perplexity model
+    let model = "sonar-pro"
+    const modelElement = document.querySelector('[data-model], .model-selector, select[aria-label*="model"]')
+    if (modelElement) {
+      const modelText = modelElement.textContent || modelElement.getAttribute("data-model") || ""
+      if (modelText.toLowerCase().includes("sonar")) {
+        model = modelText.toLowerCase().includes("pro") ? "sonar-pro" : "sonar"
+      }
+    }
+    return { platform: "Perplexity", model }
   } else if (hostname.includes("poe.com")) {
     return { platform: "Poe", model: "gpt-4" }
+  } else if (hostname.includes("grok.com") || hostname.includes("x.com") || hostname.includes("twitter.com")) {
+    // Try to detect Grok model
+    let model = "grok-beta"
+    const modelElement = document.querySelector('[data-model], .model-selector, select[aria-label*="model"]')
+    if (modelElement) {
+      const modelText = modelElement.textContent || modelElement.getAttribute("data-model") || ""
+      if (modelText.toLowerCase().includes("grok")) {
+        if (modelText.toLowerCase().includes("vision")) {
+          model = "grok-vision"
+        } else if (modelText.toLowerCase().includes("2")) {
+          model = "grok-2"
+        } else {
+          model = "grok-beta"
+        }
+      }
+    }
+    return { platform: "Grok", model }
+  } else if (hostname.includes("copilot.microsoft.com")) {
+    // Copilot uses GPT-4 by default, but may vary
+    let model = "gpt-4"
+    const modelElement = document.querySelector('[data-model], .model-selector, select[aria-label*="model"]')
+    if (modelElement) {
+      const modelText = modelElement.textContent || modelElement.getAttribute("data-model") || ""
+      if (modelText.toLowerCase().includes("3.5")) {
+        model = "gpt-3.5-turbo"
+      } else if (modelText.toLowerCase().includes("4")) {
+        model = "gpt-4"
+      }
+    }
+    return { platform: "Microsoft", model }
+  } else if (hostname.includes("manus.im")) {
+    // Try to detect Manus model
+    let model = "manus"
+    const modelElement = document.querySelector('[data-model], .model-selector, select[aria-label*="model"]')
+    if (modelElement) {
+      const modelText = modelElement.textContent || modelElement.getAttribute("data-model") || ""
+      if (modelText.toLowerCase().includes("pro")) {
+        model = "manus-pro"
+      }
+    }
+    return { platform: "Manus AI", model }
+  } else if (hostname.includes("deepseek.com")) {
+    // Try to detect Deepseek model
+    let model = "deepseek-chat"
+    const modelElement = document.querySelector('[data-model], .model-selector, select[aria-label*="model"]')
+    if (modelElement) {
+      const modelText = modelElement.textContent || modelElement.getAttribute("data-model") || ""
+      if (modelText.toLowerCase().includes("coder")) {
+        model = "deepseek-coder"
+      } else if (modelText.toLowerCase().includes("math")) {
+        model = "deepseek-math"
+      } else {
+        model = "deepseek-chat"
+      }
+    }
+    return { platform: "Deepseek", model }
+  } else if (hostname.includes("midjourney.com")) {
+    // Try to detect Midjourney version
+    let model = "midjourney"
+    const modelElement = document.querySelector('[data-version], .version-selector, select[aria-label*="version"]')
+    if (modelElement) {
+      const versionText = modelElement.textContent || modelElement.getAttribute("data-version") || ""
+      if (versionText.toLowerCase().includes("v6") || versionText.toLowerCase().includes("6")) {
+        model = "midjourney-v6"
+      }
+    }
+    return { platform: "Midjourney", model }
   }
   
   // Default to OpenAI GPT-4
@@ -358,7 +665,7 @@ function detectPlatformAndModel(): { platform: string; model: string } {
 }
 
 // Shorten prompt with token reduction display
-async function shortenPrompt(textArea: HTMLTextAreaElement | HTMLDivElement, text: string) {
+async function shortenPrompt(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement, text: string) {
   showNotification("Shortening...", "info")
   
   try {
@@ -437,6 +744,62 @@ async function shortenPrompt(textArea: HTMLTextAreaElement | HTMLDivElement, tex
       const geminiCompressed = compressedCounts.gemini || []
       originalTokens = geminiOriginal[0]?.count || 0
       compressedTokens = geminiCompressed[0]?.count || 0
+    } else if (platform === "Grok") {
+      modelKey = model || "grok-beta"
+      const grokOriginal = originalCounts.grok || []
+      const grokCompressed = compressedCounts.grok || []
+      const orig = grokOriginal.find(c => c.model.includes(model.toLowerCase()) || c.model.includes("beta"))
+      const comp = grokCompressed.find(c => c.model.includes(model.toLowerCase()) || c.model.includes("beta"))
+      originalTokens = orig?.count || grokOriginal[0]?.count || 0
+      compressedTokens = comp?.count || grokCompressed[0]?.count || 0
+    } else if (platform === "Microsoft") {
+      // Copilot uses OpenAI models, so use OpenAI tokenizer
+      modelKey = model || "gpt-4"
+      const copilotOriginal = originalCounts.copilot || originalCounts.openai || []
+      const copilotCompressed = compressedCounts.copilot || compressedCounts.openai || []
+      if (model.includes("3.5")) {
+        const orig = copilotOriginal.find(c => c.model.includes("3.5"))
+        const comp = copilotCompressed.find(c => c.model.includes("3.5"))
+        originalTokens = orig?.count || 0
+        compressedTokens = comp?.count || 0
+      } else {
+        const orig = copilotOriginal.find(c => c.model.includes("gpt-4") && !c.model.includes("3.5"))
+        const comp = copilotCompressed.find(c => c.model.includes("gpt-4") && !c.model.includes("3.5"))
+        originalTokens = orig?.count || copilotOriginal[0]?.count || 0
+        compressedTokens = comp?.count || copilotCompressed[0]?.count || 0
+      }
+    } else if (platform === "Deepseek") {
+      modelKey = model || "deepseek-chat"
+      const deepseekOriginal = originalCounts.deepseek || []
+      const deepseekCompressed = compressedCounts.deepseek || []
+      const orig = deepseekOriginal.find(c => c.model.includes(model.toLowerCase()) || c.model.includes("chat"))
+      const comp = deepseekCompressed.find(c => c.model.includes(model.toLowerCase()) || c.model.includes("chat"))
+      originalTokens = orig?.count || deepseekOriginal[0]?.count || 0
+      compressedTokens = comp?.count || deepseekCompressed[0]?.count || 0
+    } else if (platform === "Manus AI") {
+      modelKey = model || "manus"
+      const manusOriginal = originalCounts.manus || []
+      const manusCompressed = compressedCounts.manus || []
+      const orig = manusOriginal.find(c => c.model.includes(model.toLowerCase()) || c.model.includes("manus"))
+      const comp = manusCompressed.find(c => c.model.includes(model.toLowerCase()) || c.model.includes("manus"))
+      originalTokens = orig?.count || manusOriginal[0]?.count || 0
+      compressedTokens = comp?.count || manusCompressed[0]?.count || 0
+    } else if (platform === "Midjourney") {
+      modelKey = model || "midjourney"
+      const midjourneyOriginal = originalCounts.midjourney || []
+      const midjourneyCompressed = compressedCounts.midjourney || []
+      const orig = midjourneyOriginal.find(c => c.model.includes(model.toLowerCase()) || c.model.includes("midjourney"))
+      const comp = midjourneyCompressed.find(c => c.model.includes(model.toLowerCase()) || c.model.includes("midjourney"))
+      originalTokens = orig?.count || midjourneyOriginal[0]?.count || 0
+      compressedTokens = comp?.count || midjourneyCompressed[0]?.count || 0
+    } else if (platform === "Perplexity") {
+      modelKey = model || "sonar-pro"
+      const perplexityOriginal = originalCounts.perplexity || []
+      const perplexityCompressed = compressedCounts.perplexity || []
+      const orig = perplexityOriginal.find(c => c.model.includes(model.toLowerCase()) || c.model.includes("sonar"))
+      const comp = perplexityCompressed.find(c => c.model.includes(model.toLowerCase()) || c.model.includes("sonar"))
+      originalTokens = orig?.count || perplexityOriginal[0]?.count || 0
+      compressedTokens = comp?.count || perplexityCompressed[0]?.count || 0
     } else {
       // Fallback to average across all providers
       const allOriginal: number[] = []
@@ -490,8 +853,20 @@ async function shortenPrompt(textArea: HTMLTextAreaElement | HTMLDivElement, tex
   }
 }
 
+// Store original prompt for framework switching
+const originalPrompts = new WeakMap<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement, string>()
+
 // Show framework selector
-function showFrameworkSelector(textArea: HTMLTextAreaElement | HTMLDivElement, text: string) {
+function showFrameworkSelector(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement, text: string) {
+  // Store the original prompt when first opening (before any framework transformation)
+  // If we don't have a stored original, use the current text as the original
+  if (!originalPrompts.has(textArea)) {
+    originalPrompts.set(textArea, text)
+  }
+  
+  // Always use the stored original prompt for framework analysis
+  const originalPrompt = originalPrompts.get(textArea) || text
+  
   if (!frameworkUI) {
     frameworkUI = createFrameworkUI(textArea)
     document.body.appendChild(frameworkUI)
@@ -503,7 +878,8 @@ function showFrameworkSelector(textArea: HTMLTextAreaElement | HTMLDivElement, t
 
   setTimeout(() => {
     try {
-      const rankings = rankFrameworks(text)
+      // Always use original prompt for ranking and framework application
+      const rankings = rankFrameworks(originalPrompt)
       
       // Clear content first
       content.innerHTML = ""
@@ -548,7 +924,10 @@ function showFrameworkSelector(textArea: HTMLTextAreaElement | HTMLDivElement, t
         
         // Add click handler
         frameworkCard.addEventListener("click", () => {
-          const optimized = rank.output.optimized
+          // Always apply framework to the original prompt, not the current textarea content
+          const originalPrompt = originalPrompts.get(textArea) || text
+          const frameworkOutput = applyFramework(originalPrompt, rank.framework)
+          const optimized = frameworkOutput.optimized
           setText(textArea, optimized)
           if (frameworkUI) {
             frameworkUI.style.display = "none"
@@ -566,7 +945,7 @@ function showFrameworkSelector(textArea: HTMLTextAreaElement | HTMLDivElement, t
 }
 
 // Create framework UI
-function createFrameworkUI(textArea: HTMLTextAreaElement | HTMLDivElement): HTMLElement {
+function createFrameworkUI(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement): HTMLElement {
   const container = document.createElement("div")
   container.id = "promptprune-framework-ui"
   container.style.cssText = `
@@ -623,6 +1002,67 @@ function createFrameworkUI(textArea: HTMLTextAreaElement | HTMLDivElement): HTML
   })
 
   return container
+}
+
+// Show minimal notification (for template pre-fill)
+function showMinimalNotification(message: string) {
+  // Remove existing minimal notification
+  const existing = document.getElementById("promptprune-minimal-notification")
+  if (existing) {
+    existing.remove()
+  }
+
+  const notification = document.createElement("div")
+  notification.id = "promptprune-minimal-notification"
+  notification.style.cssText = `
+    position: fixed;
+    top: 80px;
+    right: 20px;
+    padding: 8px 12px;
+    background: rgba(16, 185, 129, 0.95);
+    color: white;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    z-index: 1000001;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    max-width: 280px;
+    animation: slideInMinimal 0.3s ease-out;
+    backdrop-filter: blur(10px);
+  `
+
+  // Add animation
+  const style = document.createElement("style")
+  style.textContent = `
+    @keyframes slideInMinimal {
+      from {
+        transform: translateX(100%);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+  `
+  if (!document.head.querySelector("#promptprune-minimal-notification-style")) {
+    style.id = "promptprune-minimal-notification-style"
+    document.head.appendChild(style)
+  }
+
+  notification.textContent = message
+  document.body.appendChild(notification)
+
+  // Auto-remove after 3 seconds
+  setTimeout(() => {
+    notification.style.animation = "slideInMinimal 0.3s ease-out reverse"
+    setTimeout(() => {
+      if (notification.parentNode) {
+        notification.remove()
+      }
+    }, 300)
+  }, 3000)
 }
 
 // Show notification
@@ -685,17 +1125,34 @@ function showNotification(message: string, type: "success" | "error" | "warning"
   }, 3000)
 }
 
-// Position dropdown relative to icon
+// Position dropdown relative to icon (drop UP to avoid being cut off by responses above)
 function positionDropdown(iconButton: HTMLElement, dropdown: HTMLElement) {
   const iconRect = iconButton.getBoundingClientRect()
+  const dropdownElement = dropdown.shadowRoot?.querySelector(".dropdown") as HTMLElement
+  const dropdownHeight = dropdownElement?.offsetHeight || 150
   
   dropdown.style.position = "fixed"
-  dropdown.style.top = `${iconRect.bottom + 8}px`
-  dropdown.style.right = `${window.innerWidth - iconRect.right}px`
+  
+  // Check if there's enough space above, otherwise drop down
+  const spaceAbove = iconRect.top
+  const spaceBelow = window.innerHeight - iconRect.bottom
+  
+  // Prefer dropping UP (above icon) to avoid being cut off by prompt responses
+  if (spaceAbove >= dropdownHeight + 8 || spaceAbove > spaceBelow) {
+    // Drop UP (above the icon)
+    dropdown.style.bottom = `${window.innerHeight - iconRect.top + 8}px`
+    dropdown.style.top = "auto"
+    dropdown.style.right = `${window.innerWidth - iconRect.right}px`
+  } else {
+    // Drop DOWN (below the icon) - fallback if not enough space above
+    dropdown.style.top = `${iconRect.bottom + 8}px`
+    dropdown.style.bottom = "auto"
+    dropdown.style.right = `${window.innerWidth - iconRect.right}px`
+  }
 }
 
 // Show dropdown
-function showDropdown(textArea: HTMLTextAreaElement | HTMLDivElement) {
+function showDropdown(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement) {
   const dropdown = textAreaDropdowns.get(textArea)
   const iconButton = textAreaIcons.get(textArea)
   if (!dropdown || !iconButton) return
@@ -706,15 +1163,17 @@ function showDropdown(textArea: HTMLTextAreaElement | HTMLDivElement) {
 }
 
 // Hide dropdown
-function hideDropdown(textArea: HTMLTextAreaElement | HTMLDivElement) {
+function hideDropdown(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement) {
   const dropdown = textAreaDropdowns.get(textArea)
   if (dropdown) {
     dropdown.style.display = "none"
+    dropdown.style.pointerEvents = "none"
   }
 }
 
+
 // Attach icon to textarea
-function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement) {
+function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement) {
   // Skip if already attached
   if (textAreaIcons.has(textArea)) {
     return
@@ -728,6 +1187,12 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement) {
   const iconButton = createIconButton(textArea)
   textAreaIcons.set(textArea, iconButton)
   
+  // Store reference for template tracking
+  if (iconButton.shadowRoot) {
+    const host = iconButton.shadowRoot.host as HTMLElement
+    host.setAttribute("data-textarea-ref", String(Math.random()))
+  }
+  
   // Create dropdown
   const dropdownMenu = createDropdownMenu(textArea)
   textAreaDropdowns.set(textArea, dropdownMenu)
@@ -736,15 +1201,38 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement) {
   // Position icon inside textarea using fixed positioning
   const updateIconPosition = () => {
     if (!iconButton || !textArea) return
-    const rect = textArea.getBoundingClientRect()
-    const scrollTop = window.pageYOffset || document.documentElement.scrollTop
-    const scrollLeft = window.pageXOffset || document.documentElement.scrollLeft
     
-    // Position at top-right corner of textarea
+    // Check if textarea is still in DOM
+    if (!document.body.contains(textArea) && !textArea.isConnected) {
+      return
+    }
+    
+    const rect = textArea.getBoundingClientRect()
+    
+    // Only position if textarea is visible and has dimensions
+    if (rect.width === 0 || rect.height === 0 || rect.top < 0) {
+      iconButton.style.display = "none"
+      return
+    }
+    
+    // Consistent positioning: always 8px from top and 8px from right edge of textarea
+    // This ensures the icon appears in the same column across all platforms
     iconButton.style.position = "fixed"
-    iconButton.style.top = `${rect.top + scrollTop + 8}px`
-    iconButton.style.right = `${window.innerWidth - rect.right - scrollLeft + 8}px`
-    iconButton.style.display = "none" // Hidden by default, shown on focus
+    iconButton.style.top = `${rect.top + 8}px`
+    iconButton.style.right = `${window.innerWidth - rect.right + 8}px`
+    iconButton.style.left = "auto" // Ensure left is not set
+    iconButton.style.bottom = "auto" // Ensure bottom is not set
+    
+    // Show icon if textarea has text or is focused
+    const text = getText(textArea).trim()
+    const isFocused = document.activeElement === textArea
+    if (text.length > 0 || isFocused) {
+      iconButton.style.display = "block"
+      iconButton.style.opacity = "1"
+      iconButton.style.visibility = "visible"
+    } else {
+      iconButton.style.display = "none"
+    }
   }
 
   updateIconPosition()
@@ -752,17 +1240,21 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement) {
   // Append icon to body (fixed positioning)
   document.body.appendChild(iconButton)
 
-  // Handle icon click
+  // Handle icon click - toggle dropdown
   const iconButtonElement = iconButton.shadowRoot?.querySelector(".icon-button") as HTMLElement
   if (iconButtonElement) {
     iconButtonElement.addEventListener("click", (e) => {
       e.stopPropagation()
       e.preventDefault()
       const dropdown = textAreaDropdowns.get(textArea)
-      if (dropdown && dropdown.style.display === "block") {
-        hideDropdown(textArea)
-      } else {
-        showDropdown(textArea)
+      if (dropdown) {
+        // Check if dropdown is currently visible (check shadow host display)
+        const isVisible = dropdown.style.display === "block"
+        if (isVisible) {
+          hideDropdown(textArea)
+        } else {
+          showDropdown(textArea)
+        }
       }
     })
   }
@@ -802,18 +1294,177 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement) {
     }, 10)
   }
 
-  window.addEventListener("scroll", updatePosition, true)
-  window.addEventListener("resize", updatePosition)
+  // Combined position update for both icon and field buttons
+  const updateAllPositions = () => {
+    updatePosition()
+    // Update field button position - align with P icon column
+    const btn = textAreaFieldButtons.get(textArea)
+    const iconBtn = textAreaIcons.get(textArea)
+    if (btn && textArea && textArea.isConnected) {
+      const rect = textArea.getBoundingClientRect()
+      if (rect.width > 0 && rect.height > 0) {
+        // Position field buttons in the same column as P icon (same right offset)
+        btn.style.position = "fixed"
+        btn.style.top = `${Math.max(0, rect.top + 36)}px`
+        btn.style.right = `${window.innerWidth - rect.right + 8}px` // Same right offset as P icon
+        btn.style.left = "auto"
+        btn.style.bottom = "auto"
+        btn.style.zIndex = "10001"
+        btn.style.visibility = "visible"
+        btn.style.opacity = "1"
+      }
+    }
+  }
+  
+  window.addEventListener("scroll", updateAllPositions, true)
+  window.addEventListener("resize", updateAllPositions)
 
+  // Create and attach field button (ensure it's created for all platforms)
+  try {
+    const fieldButton = createFieldButton(textArea)
+    textAreaFieldButtons.set(textArea, fieldButton)
+    document.body.appendChild(fieldButton)
+    
+    // Position field button (debounced for performance)
+    let positionTimeout: ReturnType<typeof setTimeout> | null = null
+    const updateFieldButtonPosition = () => {
+      if (positionTimeout) clearTimeout(positionTimeout)
+      positionTimeout = setTimeout(() => {
+        const btn = textAreaFieldButtons.get(textArea)
+        if (!btn || !textArea) return
+        
+        // Check if textarea is still valid
+        if (!textArea.isConnected) return
+        
+        const rect = textArea.getBoundingClientRect()
+        
+        // Only position if textarea is visible
+        if (rect.width === 0 || rect.height === 0) {
+          btn.style.display = "none"
+          return
+        }
+        
+        // Position field buttons on the right side, below the P icon (which is at rect.top + 8)
+        // Field buttons should be below the icon, so add icon height (28px) + gap (8px) = 36px
+        // Use same right offset as P icon for consistent column alignment
+        btn.style.position = "fixed"
+        btn.style.top = `${Math.max(0, rect.top + 36)}px`
+        btn.style.right = `${window.innerWidth - rect.right + 8}px` // Same right offset as P icon
+        btn.style.left = "auto"
+        btn.style.bottom = "auto"
+        btn.style.zIndex = "10001"
+        btn.style.visibility = "visible"
+        btn.style.opacity = "1"
+        
+        // Ensure buttons are visible if textarea has text or is focused
+        const text = getText(textArea).trim()
+        const isFocused = document.activeElement === textArea
+        if (text.length > 0 || isFocused) {
+          btn.style.display = "flex"
+        }
+      }, 50)
+    }
+    
+    updateFieldButtonPosition()
+    window.addEventListener("scroll", updateFieldButtonPosition, true)
+    window.addEventListener("resize", updateFieldButtonPosition)
+  } catch (error) {
+    console.error("Error creating field button:", error)
+  }
+
+  // Track if template was pre-filled
+  let templatePreFilled = false
+  
+  // Pre-fill template for first prompt or follow-up
+  const preFillTemplate = () => {
+    if (shouldPreFillTemplate(textArea)) {
+      const currentText = getText(textArea).trim()
+      
+      // Only pre-fill if completely empty
+      if (currentText.length === 0) {
+        // Check if this is a follow-up message
+        const isFollowUp = isFollowUpMessage(textArea)
+        
+        // Use different template for follow-ups
+        const template = isFollowUp 
+          ? generateFollowUpTemplate() 
+          : generateFirstPromptTemplate()
+        
+        setText(textArea, template)
+        templatePreFilled = true
+        
+        // Show minimal notification
+        setTimeout(() => {
+          const message = isFollowUp 
+            ? "✨ Context-aware template ready" 
+            : "✨ Template pre-filled for better results"
+          showMinimalNotification(message)
+        }, 300)
+        
+        // Store in icon for tooltip
+        const iconBtn = textAreaIcons.get(textArea)
+        if (iconBtn && iconBtn.shadowRoot) {
+          const host = iconBtn.shadowRoot.host as HTMLElement
+          host.setAttribute("data-template-prefilled", "true")
+        }
+        
+        // For contenteditable divs, place cursor at end
+        if (textArea instanceof HTMLDivElement && textArea.isContentEditable) {
+          setTimeout(() => {
+            const range = document.createRange()
+            const selection = window.getSelection()
+            if (selection && textArea.firstChild) {
+              range.selectNodeContents(textArea)
+              range.collapse(false)
+              selection.removeAllRanges()
+              selection.addRange(range)
+            }
+          }, 10)
+        }
+      }
+    }
+  }
+
+  // Reset original prompt when user significantly changes the text
+  const resetOriginalPrompt = () => {
+    const currentText = getText(textArea).trim()
+    const storedOriginal = originalPrompts.get(textArea)
+    
+    // If textarea is empty or text is completely different from stored original, reset
+    if (!currentText) {
+      originalPrompts.delete(textArea)
+    } else if (storedOriginal) {
+      // If current text is very different (less than 50% similarity), reset
+      const similarity = calculateSimilarity(currentText, storedOriginal)
+      if (similarity < 0.5) {
+        originalPrompts.delete(textArea)
+      }
+    }
+  }
+  
+  // Simple similarity calculation (Jaccard-like)
+  const calculateSimilarity = (text1: string, text2: string): number => {
+    const words1 = new Set(text1.toLowerCase().split(/\s+/))
+    const words2 = new Set(text2.toLowerCase().split(/\s+/))
+    const intersection = new Set([...words1].filter(x => words2.has(x)))
+    const union = new Set([...words1, ...words2])
+    return intersection.size / union.size
+  }
+  
   // Show icon on focus
   const showIcon = () => {
     const iconBtn = textAreaIcons.get(textArea)
     if (iconBtn) {
+      // Update position first
       updateIconPosition()
+      // Then ensure visibility
       iconBtn.style.display = "block"
       iconBtn.style.opacity = "1"
       iconBtn.style.visibility = "visible"
     }
+    
+    // Pre-fill template on first focus if it's the first prompt
+    preFillTemplate()
   }
 
   // Hide icon on blur (with delay to allow clicking)
@@ -837,7 +1488,8 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement) {
         const isDropdownOpen = dropdownElement && dropdownElement.style.display === "block"
         const isFrameworkUIOpen = frameworkUI && frameworkUI.style.display === "block"
         
-        if (!isDropdownOpen && !isFrameworkUIOpen && !hasText) {
+        // Only hide if dropdown is closed, framework UI is closed, no text, and not focused
+        if (!isDropdownOpen && !isFrameworkUIOpen && !hasText && document.activeElement !== textArea) {
           iconBtn.style.opacity = "0"
           setTimeout(() => {
             const iconBtn2 = textAreaIcons.get(textArea)
@@ -847,12 +1499,24 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement) {
               const isDropdownOpen2 = dropdownElement2 && dropdownElement2.style.display === "block"
               const isFrameworkUIOpen2 = frameworkUI && frameworkUI.style.display === "block"
               
-              if (!isDropdownOpen2 && !isFrameworkUIOpen2) {
+              // Double check before hiding
+              const currentText = getText(textArea).trim()
+              if (!isDropdownOpen2 && !isFrameworkUIOpen2 && document.activeElement !== textArea && !currentText) {
                 iconBtn2.style.display = "none"
                 iconBtn2.style.visibility = "hidden"
+              } else {
+                // Show it again if conditions changed
+                iconBtn2.style.display = "block"
+                iconBtn2.style.opacity = "1"
+                iconBtn2.style.visibility = "visible"
               }
             }
           }, 200)
+        } else {
+          // Keep icon visible if any condition is met
+          iconBtn.style.display = "block"
+          iconBtn.style.opacity = "1"
+          iconBtn.style.visibility = "visible"
         }
       }
     }, 150)
@@ -864,24 +1528,45 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement) {
     if (document.activeElement === textArea) {
       updateIconPosition()
     }
+    // Reset original prompt when user significantly changes the text
+    resetOriginalPrompt()
   }, true)
 
   // Show icon initially if textarea has focus or has text
   const initialText = getText(textArea).trim()
   if (document.activeElement === textArea || initialText.length > 0) {
     showIcon()
+  } else {
+    // Pre-fill template on initial load if it's the first prompt
+    setTimeout(() => {
+      preFillTemplate()
+    }, 500)
   }
   
-  // Show icon when text is added
+  // Show icon when text is added or textarea is focused
   textArea.addEventListener("input", () => {
     const currentText = getText(textArea).trim()
-    if (currentText.length > 0) {
-      const iconBtn = textAreaIcons.get(textArea)
-      if (iconBtn) {
+    const iconBtn = textAreaIcons.get(textArea)
+    if (iconBtn) {
+      if (currentText.length > 0 || document.activeElement === textArea) {
         iconBtn.style.display = "block"
         iconBtn.style.opacity = "1"
         iconBtn.style.visibility = "visible"
+        updateIconPosition()
       }
+    }
+    // Reset original prompt when user significantly changes the text
+    resetOriginalPrompt()
+  }, true)
+  
+  // Ensure icon is visible when textarea is focused
+  textArea.addEventListener("focus", () => {
+    const iconBtn = textAreaIcons.get(textArea)
+    if (iconBtn) {
+      iconBtn.style.display = "block"
+      iconBtn.style.opacity = "1"
+      iconBtn.style.visibility = "visible"
+      updateIconPosition()
     }
   }, true)
 }
@@ -908,14 +1593,22 @@ if (document.readyState === "loading") {
   setTimeout(init, 500)
 }
 
-// Watch for new textareas (SPA navigation)
+// Watch for new textareas (SPA navigation) - debounced
+let observerTimeout: ReturnType<typeof setTimeout> | null = null
 const observer = new MutationObserver(() => {
-  const textAreas = findTextAreas()
-  textAreas.forEach(textArea => {
-    if (!textAreaIcons.has(textArea)) {
-      attachIconToTextArea(textArea)
-    }
-  })
+  if (observerTimeout) clearTimeout(observerTimeout)
+  observerTimeout = setTimeout(() => {
+    const textAreas = findTextAreas()
+    textAreas.forEach(textArea => {
+      // Double check it's valid and not already attached
+      if (!textAreaIcons.has(textArea) && textArea.isConnected) {
+        const rect = textArea.getBoundingClientRect()
+        if (rect.width > 0 && rect.height > 0) {
+          attachIconToTextArea(textArea)
+        }
+      }
+    })
+  }, 300)
 })
 
 observer.observe(document.body, {

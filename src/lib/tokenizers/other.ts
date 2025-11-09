@@ -127,3 +127,74 @@ export async function getBedrockTokenCounts(text: string): Promise<TokenCount[]>
   return counts
 }
 
+/**
+ * Get token counts for Grok models (xAI)
+ * Grok uses similar tokenization to GPT models
+ */
+export async function getGrokTokenCounts(text: string): Promise<TokenCount[]> {
+  const models = ["grok-beta", "grok-2", "grok-vision"]
+  const counts = await Promise.all(
+    models.map(async (model) => ({
+      count: await countOtherProviderTokens(text, model),
+      model,
+    }))
+  )
+  return counts
+}
+
+/**
+ * Get token counts for Deepseek models
+ * Deepseek uses similar tokenization to GPT models
+ */
+export async function getDeepseekTokenCounts(text: string): Promise<TokenCount[]> {
+  const models = ["deepseek-chat", "deepseek-coder", "deepseek-math"]
+  const counts = await Promise.all(
+    models.map(async (model) => ({
+      count: await countOtherProviderTokens(text, model),
+      model,
+    }))
+  )
+  return counts
+}
+
+/**
+ * Get token counts for Microsoft Copilot models
+ * Copilot uses GPT-4 and GPT-3.5 models, reuse OpenAI tokenizer
+ */
+export async function getCopilotTokenCounts(text: string): Promise<TokenCount[]> {
+  // Copilot uses OpenAI models, reuse OpenAI tokenizer
+  const { getOpenAITokenCounts } = await import("./openai")
+  return getOpenAITokenCounts(text)
+}
+
+/**
+ * Get token counts for Manus AI models
+ * Manus AI uses similar tokenization to GPT models
+ */
+export async function getManusTokenCounts(text: string): Promise<TokenCount[]> {
+  const models = ["manus", "manus-pro"]
+  const counts = await Promise.all(
+    models.map(async (model) => ({
+      count: await countOtherProviderTokens(text, model),
+      model,
+    }))
+  )
+  return counts
+}
+
+/**
+ * Get token counts for Midjourney prompts
+ * Midjourney uses image generation prompts, approximate with GPT tokenization
+ */
+export async function getMidjourneyTokenCounts(text: string): Promise<TokenCount[]> {
+  // Midjourney prompts are typically shorter, use GPT-like tokenization
+  const models = ["midjourney", "midjourney-v6"]
+  const counts = await Promise.all(
+    models.map(async (model) => ({
+      count: await countOtherProviderTokens(text, model),
+      model,
+    }))
+  )
+  return counts
+}
+
