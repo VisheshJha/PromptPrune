@@ -132,26 +132,23 @@ export function extractConversationContext(): ConversationContext {
 
 /**
  * Generate context-aware follow-up template
+ * For follow-ups, only include Task and Context (no Role, Topic, Format, Tone)
+ * Task defaults to "Summarize in 100 words"
  */
 export function generateContextAwareTemplate(context: ConversationContext): string {
-  // For follow-ups, we don't include Role (already established)
-  // Use "Task" instead of "Action" to match the new template format
+  // For follow-ups, only Task and Context
+  // Task defaults to "Summarize in 100 words"
+  const defaultTask = "Summarize in 100 words"
   
-  // If we have a previous topic, suggest continuing with it
+  // If we have context from previous conversation, use it
   if (context.previousTopic) {
-    const action = context.suggestedAction || "continue with"
-    return `Task: ${action}
-Topic: ${context.previousTopic}`
+    return `Task: ${defaultTask}
+Context: [${context.previousTopic}]`
   }
   
-  // If we have a previous action but no topic, suggest similar action
-  if (context.previousAction) {
-    return `Task: ${context.previousAction}
-Topic: `
-  }
-  
-  // Fallback to minimal structure (no Role for follow-ups)
-  return `Task: 
-Topic: `
+  // Fallback to minimal structure with default task
+  // Context should have brackets for placeholder
+  return `Task: ${defaultTask}
+Context: [context]`
 }
 

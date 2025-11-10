@@ -107,8 +107,112 @@ export function createFieldButton(textArea: HTMLTextAreaElement | HTMLDivElement
   container.className = "field-buttons-container"
   container.id = "field-buttons-container"
   
+  // Add Clear button at the bottom
+  const clearButton = document.createElement("button")
+  clearButton.className = "field-button"
+  clearButton.style.cssText = `
+    background: #ef4444;
+    color: white;
+    margin-top: 6px;
+    font-size: 10px;
+    padding: 4px 8px;
+  `
+  clearButton.innerHTML = `<span class="field-button-label">Clear All</span>`
+  clearButton.title = "Remove all fields from template"
+  clearButton.addEventListener("click", (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    // Clear everything in the textbox - completely empty, no template
+    // Set a flag to prevent preFillTemplate from re-filling
+    textArea.setAttribute("data-cleared-by-user", "true")
+    
+    // Clear the text directly without triggering events that might re-fill
+    if (textArea instanceof HTMLTextAreaElement || textArea instanceof HTMLInputElement) {
+      textArea.value = ""
+    } else {
+      textArea.innerText = ""
+      textArea.textContent = ""
+    }
+    
+    // Clear role tracking when user clears (new conversation)
+    // Note: We can't access roleProvidedInFirstPrompt from here, but the resetOriginalPrompt will handle it
+    
+    // Dispatch events manually but with a flag to prevent re-filling
+    const inputEvent = new Event("input", { bubbles: true })
+    const changeEvent = new Event("change", { bubbles: true })
+    ;(inputEvent as any).preventRefill = true
+    ;(changeEvent as any).preventRefill = true
+    textArea.dispatchEvent(inputEvent)
+    textArea.dispatchEvent(changeEvent)
+    
+    // Focus and place cursor at start
+    textArea.focus()
+    if (textArea instanceof HTMLTextAreaElement || textArea instanceof HTMLInputElement) {
+      textArea.setSelectionRange(0, 0)
+    }
+    
+    // Remove the flag after a delay to allow normal pre-filling on next focus
+    setTimeout(() => {
+      textArea.removeAttribute("data-cleared-by-user")
+    }, 1000)
+    
+    // Update buttons after clear
+    setTimeout(updateButtons, 100)
+  })
+  
+  // Create summary button (only for follow-ups)
+  const summaryButton = document.createElement("button")
+  summaryButton.className = "field-button"
+  summaryButton.style.cssText = `
+    background: #3b82f6;
+    color: white;
+    margin-top: 6px;
+    font-size: 10px;
+    padding: 4px 8px;
+    display: none;
+  `
+  summaryButton.innerHTML = `<span class="field-button-label">Summarize</span>`
+  summaryButton.title = "Summarize in 100 words"
+  summaryButton.addEventListener("click", async (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    const currentText = getText(textArea).trim()
+    if (!currentText) {
+      // If empty, set default summarize task with brackets for context
+      setText(textArea, "Task: Summarize in 100 words\nContext: [context]")
+    } else {
+      // Import and use summarize function
+      try {
+        const { compressPrompt } = await import("~/lib/prompt-compressor")
+        const summary = compressPrompt(currentText, {
+          targetLength: 100,
+          preserveKeywords: true,
+          removeRedundancy: true,
+          simplifyPhrases: true
+        })
+        setText(textArea, summary)
+      } catch (error) {
+        console.error("Summarize error:", error)
+      }
+    }
+    
+    // Focus and place cursor at end
+    textArea.focus()
+    if (textArea instanceof HTMLTextAreaElement || textArea instanceof HTMLInputElement) {
+      const newValue = textArea.value
+      textArea.setSelectionRange(newValue.length, newValue.length)
+    }
+    
+    // Update buttons after summarize
+    setTimeout(updateButtons, 100)
+  })
+  
   shadowRoot.appendChild(style)
   shadowRoot.appendChild(container)
+  shadowRoot.appendChild(clearButton)
+  shadowRoot.appendChild(summaryButton)
   
   // Create buttons for all fields
   const buttons = new Map<string, HTMLButtonElement>()
@@ -217,18 +321,43 @@ export function createFieldButton(textArea: HTMLTextAreaElement | HTMLDivElement
     const fields = detectFields(text)
     const isFollowUp = isFollowUpMessage(textArea)
     
+    // Show/hide summary button based on follow-up status
+    const summaryBtn = shadowRoot.querySelector('button[title="Summarize in 100 words"]') as HTMLButtonElement
+    if (summaryBtn) {
+      if (isFollowUp) {
+        summaryBtn.style.display = "flex"
+      } else {
+        summaryBtn.style.display = "none"
+      }
+    }
+    
     // Update each button's active state directly from fields
     ALL_FIELDS.forEach(field => {
       const button = buttons.get(field.key)
       if (!button) return
       
-      // Role is not required for follow-ups
-      if (field.key === "role" && isFollowUp) {
-        button.style.display = "none"
-        return
+      // For follow-up messages: only show Task and Context buttons
+      // Hide Role, Topic, Format, Tone for follow-ups
+      if (isFollowUp) {
+        if (field.key === "task" || field.key === "context") {
+          // Task and Context are enabled for follow-ups
+          button.style.display = "flex"
+          button.style.opacity = "1"
+          button.style.pointerEvents = "auto"
+          button.style.cursor = "pointer"
+          button.title = `${field.label} field`
+        } else {
+          // Hide Role, Topic, Format, Tone for follow-ups
+          button.style.display = "none"
+        }
+      } else {
+        // First prompt: all fields enabled
+        button.style.display = "flex"
+        button.style.opacity = "1"
+        button.style.pointerEvents = "auto"
+        button.style.cursor = "pointer"
+        button.title = `${field.label} field`
       }
-      
-      button.style.display = "flex"
       
       // Check field presence directly - handle both "task" and "action" for Task field
       let hasField = false

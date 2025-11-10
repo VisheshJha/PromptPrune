@@ -446,7 +446,7 @@ function createDropdownMenu(textArea: HTMLTextAreaElement | HTMLDivElement | HTM
   dropdown.className = "dropdown"
   dropdown.id = "promptprune-dropdown"
 
-  // Menu items
+  // Menu items (summary removed - only shown for follow-ups as separate button)
   const items = [
     { icon: "✨", text: "Analyze with Best Framework", action: "analyze" },
     { icon: "✂️", text: "Shorten Prompt", action: "shorten" },
@@ -856,6 +856,26 @@ async function shortenPrompt(textArea: HTMLTextAreaElement | HTMLDivElement | HT
 // Store original prompt for framework switching
 const originalPrompts = new WeakMap<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement, string>()
 
+// Track if role was provided in first prompt (for follow-up detection)
+// Use both WeakMap (per textarea) and a global flag (persists across textarea changes)
+const roleProvidedInFirstPrompt = new WeakMap<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement, boolean>()
+let globalRoleProvided = false // Global flag that persists across textarea changes
+
+// Helper to check if role exists in text
+function hasRoleInText(text: string): boolean {
+  const rolePatterns = [
+    /role:\s*(.+?)(?:\n|$)/i,
+    /(?:you are|act as|role|as a|as an|as the)\s+(?:an |a )?([^.,!?\n]+?)(?:\s+who|\s+that|\s+in|$)/i,
+  ]
+  for (const pattern of rolePatterns) {
+    const match = text.match(pattern)
+    if (match && match[1] && match[1].trim().length > 2) {
+      return true
+    }
+  }
+  return false
+}
+
 // Show framework selector
 function showFrameworkSelector(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement, text: string) {
   // Store the original prompt when first opening (before any framework transformation)
@@ -924,8 +944,17 @@ function showFrameworkSelector(textArea: HTMLTextAreaElement | HTMLDivElement | 
         
         // Add click handler
         frameworkCard.addEventListener("click", () => {
-          // Always apply framework to the original prompt, not the current textarea content
+          // CRITICAL: Always use the stored original prompt, never the current textarea content
+          // This prevents framework-to-framework duplication of words like "action", "you are", etc.
+          const storedOriginal = originalPrompts.get(textArea)
+          if (!storedOriginal) {
+            // If no stored original, store the current text as original before applying framework
+            const currentText = getText(textArea).trim()
+            originalPrompts.set(textArea, currentText)
+          }
           const originalPrompt = originalPrompts.get(textArea) || text
+          
+          // Apply framework to the ORIGINAL prompt only
           const frameworkOutput = applyFramework(originalPrompt, rank.framework)
           const optimized = frameworkOutput.optimized
           setText(textArea, optimized)
@@ -1376,22 +1405,91 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
   let templatePreFilled = false
   
   // Pre-fill template for first prompt or follow-up
-  const preFillTemplate = () => {
+  const preFillTemplate = (event?: Event) => {
+    // Don't pre-fill if user just cleared the textbox
+    if (textArea.hasAttribute("data-cleared-by-user")) {
+      return
+    }
+    
+    // Don't pre-fill if event has preventRefill flag
+    if (event && (event as any).preventRefill) {
+      return
+    }
+    
     if (shouldPreFillTemplate(textArea)) {
       const currentText = getText(textArea).trim()
       
       // Only pre-fill if completely empty
       if (currentText.length === 0) {
         // Check if this is a follow-up message
-        const isFollowUp = isFollowUpMessage(textArea)
+        // Use multiple methods: 
+        // 1) Check if role was provided before (per textarea or globally)
+        // 2) Check DOM for previous messages
+        // 3) Check if previous messages in DOM contain role
+        const hasRoleBefore = roleProvidedInFirstPrompt.get(textArea) || globalRoleProvided || false
+        const hasPreviousMessages = isFollowUpMessage(textArea)
+        
+        // Also check if previous messages in the conversation contain role
+        let hasRoleInPreviousMessages = false
+        if (hasPreviousMessages) {
+          // Look for role in previous user messages
+          const messageSelectors = [
+            '[class*="user-message"]',
+            '[class*="chat-message"]',
+            '[data-role="user"]',
+          ]
+          for (const selector of messageSelectors) {
+            const messages = document.querySelectorAll(selector)
+            for (const msg of Array.from(messages)) {
+              if (msg === textArea || msg.contains(textArea)) continue
+              const text = msg.textContent?.trim() || ""
+              if (text.length > 10 && hasRoleInText(text)) {
+                hasRoleInPreviousMessages = true
+                break
+              }
+            }
+            if (hasRoleInPreviousMessages) break
+          }
+        }
+        
+        const isFollowUp = hasRoleBefore || hasPreviousMessages || hasRoleInPreviousMessages
+        
+        // Debug logging
+        console.log("[PromptPrune] Follow-up detection:", {
+          hasRoleBefore,
+          globalRoleProvided,
+          hasPreviousMessages,
+          hasRoleInPreviousMessages,
+          isFollowUp,
+          textAreaId: textArea.id || "no-id"
+        })
         
         // Use different template for follow-ups
-        const template = isFollowUp 
-          ? generateFollowUpTemplate() 
-          : generateFirstPromptTemplate()
+        // Follow-ups: Only Task (with default "Summarize in 100 words") and Context
+        // First prompts: Role, Task, Topic, Format, Tone
+        let template: string
+        if (isFollowUp) {
+          template = generateFollowUpTemplate()
+          // Verify template is correct (should only have Task and Context)
+          console.log("[PromptPrune] Follow-up template (role provided:", hasRoleBefore, ", has messages:", hasPreviousMessages, "):", template)
+        } else {
+          template = generateFirstPromptTemplate()
+          console.log("[PromptPrune] First prompt template:", template)
+        }
         
+        // Set the template text
         setText(textArea, template)
         templatePreFilled = true
+        
+        // Track if role is in the template (for future follow-up detection)
+        // This helps detect follow-ups even if DOM detection fails
+        if (!isFollowUp && hasRoleInText(template)) {
+          roleProvidedInFirstPrompt.set(textArea, true)
+          globalRoleProvided = true // Set global flag too
+          console.log("[PromptPrune] Role detected in first prompt template, marking for follow-ups")
+        } else if (isFollowUp) {
+          console.log("[PromptPrune] Follow-up detected - using follow-up template")
+        }
         
         // Show minimal notification
         setTimeout(() => {
@@ -1426,19 +1524,54 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
   }
 
   // Reset original prompt when user significantly changes the text
-  const resetOriginalPrompt = () => {
+  const resetOriginalPrompt = (event?: Event) => {
+    // Don't reset if user just cleared the textbox
+    if (textArea.hasAttribute("data-cleared-by-user")) {
+      return
+    }
+    
+    // Don't reset if event has preventRefill flag
+    if (event && (event as any).preventRefill) {
+      return
+    }
+    
     const currentText = getText(textArea).trim()
     const storedOriginal = originalPrompts.get(textArea)
     
-    // If textarea is empty or text is completely different from stored original, reset
-    if (!currentText) {
+    // If textarea is empty, clear stored original and role tracking
+    // But don't clear global flag - it persists across textarea changes
+    if (currentText.length === 0) {
       originalPrompts.delete(textArea)
-    } else if (storedOriginal) {
-      // If current text is very different (less than 50% similarity), reset
-      const similarity = calculateSimilarity(currentText, storedOriginal)
-      if (similarity < 0.5) {
-        originalPrompts.delete(textArea)
-      }
+      roleProvidedInFirstPrompt.delete(textArea)
+      // Note: We keep globalRoleProvided = true to persist across textarea changes
+      return
+    }
+    
+    // Track if role is present in current text (for follow-up detection)
+    // This helps detect follow-ups even if DOM detection fails
+    if (hasRoleInText(currentText)) {
+      roleProvidedInFirstPrompt.set(textArea, true)
+      globalRoleProvided = true // Set global flag too
+      console.log("[PromptPrune] Role detected in user input, marking for follow-ups")
+    }
+    
+    if (!storedOriginal) {
+      // No stored original, store current text as original
+      originalPrompts.set(textArea, currentText)
+      return
+    }
+    
+    // If current text is very different (less than 50% similarity), reset
+    // This allows user to start a new prompt without framework artifacts
+    const similarity = calculateSimilarity(currentText, storedOriginal)
+    if (similarity < 0.5) {
+      originalPrompts.delete(textArea)
+      // Store the new text as the new original
+      originalPrompts.set(textArea, currentText)
+      // Reset role tracking for new conversation (user started a completely new prompt)
+      roleProvidedInFirstPrompt.delete(textArea)
+      globalRoleProvided = false // Reset global flag too
+      console.log("[PromptPrune] New conversation detected, reset role tracking")
     }
   }
   
@@ -1464,7 +1597,7 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
     }
     
     // Pre-fill template on first focus if it's the first prompt
-    preFillTemplate()
+    preFillTemplate(undefined)
   }
 
   // Hide icon on blur (with delay to allow clicking)
@@ -1522,14 +1655,18 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
     }, 150)
   }
 
-  textArea.addEventListener("focus", showIcon, true)
+  textArea.addEventListener("focus", (e) => {
+    showIcon()
+    // Pre-fill template on focus if empty
+    preFillTemplate(e)
+  }, true)
   textArea.addEventListener("blur", hideIcon, true)
-  textArea.addEventListener("input", () => {
+  textArea.addEventListener("input", (e) => {
     if (document.activeElement === textArea) {
       updateIconPosition()
     }
     // Reset original prompt when user significantly changes the text
-    resetOriginalPrompt()
+    resetOriginalPrompt(e)
   }, true)
 
   // Show icon initially if textarea has focus or has text
@@ -1537,14 +1674,16 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
   if (document.activeElement === textArea || initialText.length > 0) {
     showIcon()
   } else {
-    // Pre-fill template on initial load if it's the first prompt
+    // Pre-fill template on initial load if it's the first prompt (only if not cleared by user)
     setTimeout(() => {
-      preFillTemplate()
+      if (!textArea.hasAttribute("data-cleared-by-user")) {
+        preFillTemplate()
+      }
     }, 500)
   }
   
   // Show icon when text is added or textarea is focused
-  textArea.addEventListener("input", () => {
+  textArea.addEventListener("input", (e) => {
     const currentText = getText(textArea).trim()
     const iconBtn = textAreaIcons.get(textArea)
     if (iconBtn) {
@@ -1556,17 +1695,20 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
       }
     }
     // Reset original prompt when user significantly changes the text
-    resetOriginalPrompt()
+    // This also tracks role in the text (see resetOriginalPrompt function)
+    resetOriginalPrompt(e)
   }, true)
   
-  // Ensure icon is visible when textarea is focused
-  textArea.addEventListener("focus", () => {
-    const iconBtn = textAreaIcons.get(textArea)
-    if (iconBtn) {
-      iconBtn.style.display = "block"
-      iconBtn.style.opacity = "1"
-      iconBtn.style.visibility = "visible"
-      updateIconPosition()
+  // Also track when user submits/sends the message (Enter key or submit button)
+  textArea.addEventListener("keydown", (e) => {
+    // Track role before message is sent (final check)
+    if (e.key === "Enter" && !e.shiftKey) {
+      const currentText = getText(textArea).trim()
+      if (currentText.length > 0 && hasRoleInText(currentText)) {
+        roleProvidedInFirstPrompt.set(textArea, true)
+        globalRoleProvided = true // Set global flag too
+        console.log("[PromptPrune] Role detected before sending message, marking for follow-ups")
+      }
     }
   }, true)
 }
@@ -1584,6 +1726,17 @@ function init() {
   textAreas.forEach(textArea => {
     attachIconToTextArea(textArea)
   })
+  
+  // Check if we should reset global role flag (when new conversation starts)
+  // This happens when URL changes or page reloads
+  const currentUrl = window.location.href
+  const lastUrl = sessionStorage.getItem('promptprune_last_url')
+  if (lastUrl && lastUrl !== currentUrl) {
+    // URL changed, might be a new conversation
+    globalRoleProvided = false
+    console.log("[PromptPrune] URL changed, reset global role tracking")
+  }
+  sessionStorage.setItem('promptprune_last_url', currentUrl)
 }
 
 // Start when page is ready
