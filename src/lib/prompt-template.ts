@@ -33,6 +33,7 @@ export function generateFollowUpTemplate(): string {
 
 /**
  * Check if textarea should be pre-filled with template
+ * Pre-fills for both first prompts (no previous messages) and follow-ups (has previous messages but empty textarea)
  */
 export function shouldPreFillTemplate(textArea: HTMLElement): boolean {
   // Check if textarea is empty
@@ -40,14 +41,8 @@ export function shouldPreFillTemplate(textArea: HTMLElement): boolean {
     ? textArea.value.trim()
     : textArea.textContent?.trim() || ""
   
-  if (text.length > 0) {
-    return false // Already has content
-  }
-  
-  // Check if this is the first message (no previous messages)
-  const hasPreviousMessages = checkForPreviousMessages()
-  
-  return !hasPreviousMessages
+  // Only pre-fill if textarea is completely empty
+  return text.length === 0
 }
 
 /**

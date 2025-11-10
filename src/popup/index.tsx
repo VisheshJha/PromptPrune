@@ -114,6 +114,10 @@ function IndexPopup() {
             <SmartOptimizer
               originalPrompt={prompt}
               onOptimized={(optimized) => setOptimizedPrompt(optimized)}
+              onFrameworkSelected={(frameworkPrompt) => {
+                // Update optimized prompt when framework is selected (for Savings tab)
+                setOptimizedPrompt(frameworkPrompt)
+              }}
             />
           )}
           {activeTab === "tokens" && <TokenDisplay text={prompt} />}

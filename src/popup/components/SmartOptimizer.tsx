@@ -7,9 +7,10 @@ import { applyFramework, rankFrameworks, FRAMEWORKS, type FrameworkType } from "
 interface SmartOptimizerProps {
   originalPrompt: string
   onOptimized: (optimized: string) => void
+  onFrameworkSelected?: (frameworkPrompt: string) => void
 }
 
-export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerProps) {
+export function SmartOptimizer({ originalPrompt, onOptimized, onFrameworkSelected }: SmartOptimizerProps) {
   const [analyzed, setAnalyzed] = useState<string>("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -54,10 +55,17 @@ export function SmartOptimizer({ originalPrompt, onOptimized }: SmartOptimizerPr
     if (selectedFramework && originalPrompt.trim()) {
       const frameworkOutput = applyFramework(originalPrompt, selectedFramework)
       setFrameworkPrompt(frameworkOutput.optimized)
+      // Notify parent component so Savings tab can update
+      if (onFrameworkSelected) {
+        onFrameworkSelected(frameworkOutput.optimized)
+      }
     } else if (!originalPrompt.trim()) {
       setFrameworkPrompt("")
+      if (onFrameworkSelected) {
+        onFrameworkSelected("")
+      }
     }
-  }, [selectedFramework, originalPrompt])
+  }, [selectedFramework, originalPrompt, onFrameworkSelected])
 
   const handleAnalyze = async () => {
     if (!originalPrompt.trim()) {

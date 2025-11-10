@@ -7,9 +7,11 @@ import { intelligentSpellCheck } from "./intelligent-processor"
 
 export interface CompressionOptions {
   maxLength?: number
+  targetLength?: number // Target word count
   preserveKeywords?: boolean
   removeRedundancy?: boolean
   simplifyPhrases?: boolean
+  aggressive?: boolean
 }
 
 /**
@@ -21,9 +23,11 @@ export function compressPrompt(
 ): string {
   const {
     maxLength,
+    targetLength,
     preserveKeywords = true,
     removeRedundancy = true,
     simplifyPhrases = true,
+    aggressive = false,
   } = options
 
   let compressed = prompt.trim()
@@ -45,9 +49,30 @@ export function compressPrompt(
   // Remove excessive whitespace
   compressed = compressed.replace(/\s+/g, " ").trim()
 
+  // If targetLength (word count) is specified, calculate maxLength from it
+  let effectiveMaxLength = maxLength
+  if (targetLength && !maxLength) {
+    // Approximate: 5 characters per word on average
+    effectiveMaxLength = targetLength * 5
+  }
+
   // If maxLength is specified, truncate intelligently
-  if (maxLength && compressed.length > maxLength) {
-    compressed = intelligentTruncate(compressed, maxLength, preserveKeywords)
+  if (effectiveMaxLength && compressed.length > effectiveMaxLength) {
+    compressed = intelligentTruncate(compressed, effectiveMaxLength, preserveKeywords)
+  }
+  
+  // If aggressive mode, apply additional compression
+  if (aggressive && effectiveMaxLength && compressed.length > effectiveMaxLength) {
+    // Remove more filler words
+    compressed = compressed.replace(/\b(very|really|quite|rather|somewhat|pretty|fairly)\s+/gi, "")
+    compressed = compressed.replace(/\b(in order to|so as to|for the purpose of)\b/gi, "to")
+    compressed = compressed.replace(/\b(due to the fact that|owing to the fact that|because of the fact that)\b/gi, "because")
+    compressed = compressed.replace(/\s+/g, " ").trim()
+    
+    // Final truncate if still too long
+    if (compressed.length > effectiveMaxLength) {
+      compressed = intelligentTruncate(compressed, effectiveMaxLength, preserveKeywords)
+    }
   }
 
   return compressed
