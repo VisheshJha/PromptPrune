@@ -14,6 +14,7 @@
     "test:coverage": "vitest --coverage"
   },
   "dependencies": {
+    "@xenova/transformers": "^2.17.2",
     "compromise": "^14.14.4",
     "js-tiktoken": "^1.0.21",
     "plasmo": "^0.88.0",
@@ -42,10 +43,29 @@
   "manifest": {
     "host_permissions": [
       "http://localhost/*",
-      "http://127.0.0.1/*"
+      "http://127.0.0.1/*",
+      "https://chat.openai.com/*",
+      "https://chatgpt.com/*",
+      "https://claude.ai/*",
+      "https://gemini.google.com/*",
+      "https://www.perplexity.ai/*",
+      "https://perplexity.ai/*",
+      "https://poe.com/*",
+      "https://grok.com/*",
+      "https://x.com/*",
+      "https://twitter.com/*",
+      "https://copilot.microsoft.com/*",
+      "https://manus.im/*",
+      "https://www.deepseek.com/*",
+      "https://deepseek.com/*",
+      "https://www.midjourney.com/*",
+      "https://midjourney.com/*"
     ],
     "permissions": [
-      "storage"
+      "storage",
+      "unlimitedStorage",
+      "scripting",
+      "tabs"
     ]
   }
 }

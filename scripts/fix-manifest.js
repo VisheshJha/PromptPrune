@@ -69,18 +69,31 @@ if (!contentScriptFile) {
   process.exit(0)
 }
 
+// Update content_scripts matches to include all platforms
+const allMatches = [
+  "https://chat.openai.com/*",
+  "https://chatgpt.com/*",
+  "https://claude.ai/*",
+  "https://gemini.google.com/*",
+  "https://gemini.google.com/app/*",
+  "https://www.perplexity.ai/*",
+  "https://perplexity.ai/*",
+  "https://poe.com/*",
+  "https://grok.com/*",
+  "https://x.com/*",
+  "https://twitter.com/*",
+  "https://copilot.microsoft.com/*",
+  "https://manus.im/*",
+  "https://www.deepseek.com/*",
+  "https://deepseek.com/*",
+  "https://www.midjourney.com/*",
+  "https://midjourney.com/*"
+]
+
 if (!manifest.content_scripts || manifest.content_scripts.length === 0) {
   manifest.content_scripts = [
     {
-      matches: [
-        "https://chat.openai.com/*",
-        "https://claude.ai/*",
-        "https://gemini.google.com/*",
-        "https://www.perplexity.ai/*",
-        "https://poe.com/*",
-        "https://*.openai.com/*",
-        "https://*.anthropic.com/*"
-      ],
+      matches: allMatches,
       js: [contentScriptFile],
       run_at: "document_idle"
     }
@@ -90,13 +103,18 @@ if (!manifest.content_scripts || manifest.content_scripts.length === 0) {
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
   console.log('✅ Added content_scripts to manifest.json')
 } else {
-  // Update existing content_scripts with correct file name
-  const updated = manifest.content_scripts.some(cs => {
+  // Update existing content_scripts with correct file name and matches
+  let updated = false
+  manifest.content_scripts.forEach(cs => {
     if (cs.js && cs.js.length > 0 && !cs.js[0].includes(contentScriptFile)) {
       cs.js = [contentScriptFile]
-      return true
+      updated = true
     }
-    return false
+    // Update matches to include all platforms
+    if (JSON.stringify(cs.matches || []) !== JSON.stringify(allMatches)) {
+      cs.matches = allMatches
+      updated = true
+    }
   })
   
   if (updated) {
@@ -113,14 +131,42 @@ let manifestChanged = false
 if (!manifest.permissions) {
   manifest.permissions = []
 }
-if (!manifest.permissions.includes('storage')) {
-  manifest.permissions.push('storage')
-  manifestChanged = true
+const requiredPermissions = ['storage', 'unlimitedStorage', 'scripting', 'tabs']
+requiredPermissions.forEach(perm => {
+  if (!manifest.permissions.includes(perm)) {
+    manifest.permissions.push(perm)
+    manifestChanged = true
+  }
+})
+
+// Ensure host_permissions are set
+if (!manifest.host_permissions) {
+  manifest.host_permissions = []
 }
-if (!manifest.permissions.includes('scripting')) {
-  manifest.permissions.push('scripting')
-  manifestChanged = true
-}
+const requiredHosts = [
+  "https://chat.openai.com/*",
+  "https://chatgpt.com/*",
+  "https://claude.ai/*",
+  "https://gemini.google.com/*",
+  "https://www.perplexity.ai/*",
+  "https://perplexity.ai/*",
+  "https://poe.com/*",
+  "https://grok.com/*",
+  "https://x.com/*",
+  "https://twitter.com/*",
+  "https://copilot.microsoft.com/*",
+  "https://manus.im/*",
+  "https://www.deepseek.com/*",
+  "https://deepseek.com/*",
+  "https://www.midjourney.com/*",
+  "https://midjourney.com/*"
+]
+requiredHosts.forEach(host => {
+  if (!manifest.host_permissions.includes(host)) {
+    manifest.host_permissions.push(host)
+    manifestChanged = true
+  }
+})
 
 if (!manifest.background) {
   const backgroundFile = path.join(buildDir, 'static', 'background', 'index.js')
