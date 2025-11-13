@@ -63,53 +63,13 @@ function levenshteinDistance(str1: string, str2: string): number {
 
 /**
  * Find the closest word from dictionary using Levenshtein distance
+ * NOTE: This function is deprecated - we only use the misspellings dictionary now
+ * to avoid over-correction. Levenshtein distance was too aggressive.
  */
-function findClosestWord(word: string, maxDistance: number = 2): string | null {
-  const lowerWord = word.toLowerCase()
-  
-  // If it's already a common word, return it
-  if (COMMON_WORDS.has(lowerWord)) {
-    return word
-  }
-
-  let bestMatch: string | null = null
-  let bestDistance = maxDistance + 1
-
-  for (const dictWord of COMMON_WORDS) {
-    const distance = levenshteinDistance(lowerWord, dictWord)
-    if (distance < bestDistance) {
-      bestDistance = distance
-      bestMatch = dictWord
-    }
-  }
-
-  // Also check common misspellings
-  const commonMisspellings: Record<string, string> = {
-    'wriet': 'write',
-    'wrte': 'write',
-    'writng': 'writing',
-    'writ': 'write',
-    'abt': 'about',
-    'abut': 'about',
-    'gud': 'good',
-    'contnt': 'content',
-    'contant': 'content',
-    'contnet': 'content',
-    'tech': 'technology',
-    'plz': 'please',
-    'pls': 'please',
-    'u': 'you',
-    'ur': 'your',
-    'thru': 'through',
-    'thx': 'thanks',
-    'ty': 'thank you',
-  }
-
-  if (commonMisspellings[lowerWord]) {
-    return commonMisspellings[lowerWord]
-  }
-
-  return bestDistance <= maxDistance ? bestMatch : null
+function findClosestWord(_word: string, _maxDistance: number = 2): string | null {
+  // This function is kept for backwards compatibility but should not be used
+  // as it's too aggressive and replaces valid words
+  return null
 }
 
 /**
@@ -132,8 +92,9 @@ export function intelligentSpellCheck(text: string): {
     }
   })
 
-  // Expanded common misspellings dictionary
+  // Expanded common misspellings dictionary - ONLY fix obvious typos
   const commonMisspellings: Record<string, string> = {
+    // Obvious typos
     'wriet': 'write',
     'wrte': 'write',
     'writng': 'writing',
@@ -144,7 +105,6 @@ export function intelligentSpellCheck(text: string): {
     'contnt': 'content',
     'contant': 'content',
     'contnet': 'content',
-    'tech': 'technology',
     'plz': 'please',
     'pls': 'please',
     'u': 'you',
@@ -152,9 +112,14 @@ export function intelligentSpellCheck(text: string): {
     'thru': 'through',
     'thx': 'thanks',
     'ty': 'thank you',
+    'becasue': 'because',
+    'selss': 'sells',
+    'it\'s': 'its', // Fix apostrophe in "it's" when used incorrectly
+    // Keep valid words as-is (don't "correct" them)
     'delhi': 'Delhi',
     'pollution': 'pollution',
     'ai': 'AI',
+    'ml': 'ML', // Machine Learning
     'robots': 'robots',
     'stuff': 'stuff',
     'boring': 'boring',
@@ -169,6 +134,16 @@ export function intelligentSpellCheck(text: string): {
     'concise': 'concise',
     'organize': 'organize',
     'headings': 'headings',
+    'email': 'email',
+    'draft': 'draft',
+    'sales': 'sales',
+    'rep': 'rep', // representative
+    'company': 'company',
+    'product': 'product',
+    'cold': 'cold',
+    'want': 'want',
+    'which': 'which',
+    'tech': 'technology', // Only expand if it's clearly meant to be "technology"
   }
 
   // Check each word
@@ -206,28 +181,8 @@ export function intelligentSpellCheck(text: string): {
       }
     }
 
-    // Try to find closest match using Levenshtein distance (only for non-proper nouns)
-    if (!/^[A-Z]/.test(word)) {
-      const closest = findClosestWord(word, 2)
-      if (closest && closest !== lowerWord) {
-        // Replace word in text (case-insensitive, whole word only)
-        const regex = new RegExp(`\\b${word}\\b`, 'gi')
-        if (corrected.match(regex)) {
-          corrected = corrected.replace(regex, (match) => {
-            // Preserve capitalization
-            if (/^[A-Z]/.test(match)) {
-              return closest.charAt(0).toUpperCase() + closest.slice(1)
-            }
-            return closest
-          })
-          corrections.push({
-            original: word,
-            corrected: closest,
-            position: wordPositions.get(word) || 0
-          })
-        }
-      }
-    }
+    // DO NOT use Levenshtein distance - it's too aggressive and replaces valid words
+    // Only fix words that are in the misspellings dictionary
   })
 
   // Use compromise for additional normalization
@@ -259,37 +214,328 @@ export function extractIntent(text: string): {
     style?: string
   }
 } {
-  const doc = nlp(text)
-  const lower = text.toLowerCase()
-
-  // Extract action
-  const verbs = doc.verbs().out('array')
-  const action = verbs[0]?.toLowerCase() || 'write'
+  // Handle null, undefined, or non-string input
+  if (!text || typeof text !== 'string') {
+    return {
+      action: 'write',
+      topic: '',
+      format: '',
+      audience: '',
+      tone: '',
+      constraints: {}
+    }
+  }
   
-  // Extract topic - look for noun phrases after action words
-  let topic = ''
-  const topicPatterns = [
-    // Pattern 1: "write about X"
-    /(?:write|create|make|generate|tell|explain|describe|discuss)\s+(?:about|on|regarding)\s+([^.,!?\n]+?)(?:\s+(?:for|to|with|and|or|,|\.|$)|$)/i,
-    // Pattern 2: "write a short article about X"
-    /(?:write|create|make|generate)\s+(?:a|an|the)?\s*(?:short|brief|long|detailed)?\s*(?:article|report|blog|summary)?\s+(?:about|on|regarding)\s+([^.,!?\n]+?)(?:\s+(?:for|to|with|and|or|,|\.|$)|$)/i,
-    // Pattern 3: "write X" (direct object)
-    /(?:write|create|make|generate)\s+([^.,!?\n]+?)(?:\s+(?:about|on|for|to|with|and|or|,|\.|$)|$)/i,
-  ]
-
-  for (const pattern of topicPatterns) {
-    const match = text.match(pattern)
-    if (match && match[1]) {
-      topic = match[1].trim()
-      // Remove action words that might have been captured
-      topic = topic.replace(/^(a|an|the|short|brief|long|detailed|article|report|blog|summary|content)\s+/i, '')
-      // Remove trailing qualifiers
-      topic = topic.replace(/\s+(for|to|with|and|or|make|it|good|better|gud)\s+[^,]+$/, '').trim()
-      // Remove common filler words at the end
-      topic = topic.replace(/\s+(stuff|things|topics|subject)$/i, '').trim()
-      if (topic && topic.length > 2 && !COMMON_WORDS.has(topic.toLowerCase())) {
-        break
+  // Handle empty or whitespace-only strings
+  const cleaned = text.trim()
+  if (!cleaned || cleaned.length === 0) {
+    return {
+      action: 'write',
+      topic: '',
+      format: '',
+      audience: '',
+      tone: '',
+      constraints: {}
+    }
+  }
+  
+  // Handle very short prompts (1-2 words) - return early with basic extraction
+  const words = cleaned.split(/\s+/).filter(w => w.length > 0)
+  if (words.length === 1) {
+    // Single word - treat as topic with default action "write"
+    // Exception: clear imperative action verbs at start
+    const word = words[0].toLowerCase()
+    const clearActionVerbs = ['write', 'create', 'make', 'generate', 'tell', 'explain', 'describe', 'discuss', 'analyze', 'build', 'design', 'develop']
+    if (clearActionVerbs.includes(word)) {
+      return {
+        action: word,
+        topic: '',
+        format: '',
+        audience: '',
+        tone: '',
+        constraints: {}
       }
+    } else {
+      // Single word that's not a clear action verb - treat as topic
+      return {
+        action: 'write',
+        topic: words[0],
+        format: '',
+        audience: '',
+        tone: '',
+        constraints: {}
+      }
+    }
+  } else if (words.length === 2) {
+    // Two words - check if first is an action verb
+    const firstWord = words[0]?.toLowerCase() || ''
+    const secondWord = words[1]?.toLowerCase() || ''
+    
+    const actionVerbs = ['write', 'create', 'make', 'generate', 'tell', 'explain', 'describe', 'discuss', 'analyze', 'build', 'design', 'develop', 'help', 'assist']
+    if (actionVerbs.includes(firstWord)) {
+      return {
+        action: firstWord,
+        topic: secondWord || '',
+        format: '',
+        audience: '',
+        tone: '',
+        constraints: {}
+      }
+    } else {
+      // If not an action verb, treat both as topic
+      return {
+        action: 'write',
+        topic: words.join(' '),
+        format: '',
+        audience: '',
+        tone: '',
+        constraints: {}
+      }
+    }
+  }
+  
+  // Handle very long prompts (10000+ words) - truncate for processing
+  let processedText = cleaned
+  if (words.length > 10000) {
+    // Take first 5000 words for processing to avoid performance issues
+    processedText = words.slice(0, 5000).join(' ')
+  }
+  
+  const doc = nlp(processedText)
+  const lower = processedText.toLowerCase()
+
+  // Extract action - handle questions and statements differently
+  let action = 'write'
+  
+  // Check if it's a question (interrogative)
+  const isQuestionPrompt = /^(who|what|where|when|why|how|which|whom|whose|do|does|did|is|are|was|were|can|could|should|would|will)\s+/i.test(text.trim())
+  
+  if (isQuestionPrompt) {
+    // For questions, prioritize action verbs in the question body, not auxiliary verbs
+    // Pattern 1: "Who/What/How [subject] should/can/will [verb]"
+    const shouldVerbMatch = text.match(/\b(should|can|could|will|would)\s+([a-z]+)\b/i)
+    if (shouldVerbMatch && shouldVerbMatch[2]) {
+      const verb = shouldVerbMatch[2].toLowerCase()
+      // Check if it's a meaningful action verb
+      if (['refer', 'consult', 'approach', 'contact', 'use', 'utilize', 'suggest', 'recommend', 'explain', 'describe', 'analyze', 'discuss'].includes(verb)) {
+        action = verb
+      }
+    }
+    
+    // Pattern 2: "Who do you think [subject] should [verb]"
+    if (action === 'write' || action === 'analyze') {
+      const thinkVerbMatch = text.match(/\b(?:do|does|did)\s+(?:you|we|they|it|he|she)?\s*(?:think|believe|suggest|recommend)?\s*[^?]*?\s+(?:should|can|could|will|would)?\s*(refer|consult|approach|contact|use|utilize|suggest|recommend|explain|describe|analyze|discuss|resolve|solve|address|handle|manage|implement|create|write|generate|build|design|develop)\b/i)
+      if (thinkVerbMatch && thinkVerbMatch[1]) {
+        action = thinkVerbMatch[1].toLowerCase()
+      }
+    }
+    
+    // Pattern 3: Question word specific actions
+    if (action === 'write' || action === 'analyze') {
+      if (lower.startsWith('what') || lower.startsWith('how')) {
+        // "What is..." or "How can..." usually means explain
+        if (lower.match(/\b(is|are|can|could|should|would|will)\s+/)) {
+          action = 'explain'
+        }
+      } else if (lower.startsWith('where')) {
+        // "Where should..." usually means suggest
+        action = 'suggest'
+      } else if (lower.startsWith('when')) {
+        // "When is..." usually means analyze
+        action = 'analyze'
+      } else if (lower.startsWith('why')) {
+        // "Why did..." usually means explain
+        action = 'explain'
+      } else if (lower.startsWith('who')) {
+        // "Who should..." usually means refer or suggest
+        if (lower.match(/\b(refer|consult|approach|contact)\b/)) {
+          action = lower.match(/\b(refer|consult|approach|contact)\b/i)?.[1]?.toLowerCase() || 'refer'
+        } else {
+          action = 'suggest'
+        }
+      }
+    }
+    
+    // Fallback: look for any action verb in the question
+    if (action === 'write' || action === 'analyze') {
+      const actionVerbMatch = text.match(/\b(explain|describe|discuss|analyze|evaluate|assess|compare|suggest|recommend|refer|consult|approach|contact|use|utilize|resolve|solve|address|handle|manage|implement|create|write|generate|build|design|develop)\b/i)
+      if (actionVerbMatch && actionVerbMatch[1]) {
+        action = actionVerbMatch[1].toLowerCase()
+      }
+    }
+  } else {
+    // For statements, prioritize action verbs at the START of the sentence
+    // Pattern 1: "it's my responsibility to [action]" - extract the action
+    const responsibilityPattern = /(?:it'?s|it is)\s+my\s+responsibility\s+to\s+(write|create|make|generate|tell|explain|describe|analyze|discuss|build|design|develop|draft|send|compose|help|assist)/i
+    const responsibilityMatch = text.match(responsibilityPattern)
+    if (responsibilityMatch && responsibilityMatch[1]) {
+      action = responsibilityMatch[1].toLowerCase()
+    } else {
+      // Pattern 2: Direct imperative at start: "Write...", "Create...", "Explain..."
+      const imperativePattern = /^(write|create|make|generate|send|draft|tell|explain|describe|discuss|analyze|build|design|develop|compose|produce|formulate|construct|establish|implement|execute|perform|deliver|present|prepare|organize|structure|author|craft|form|initiate|launch|introduce|propose|suggest|recommend|advise|guide|instruct|teach|educate|inform|clarify|define|outline|summarize|review|evaluate|assess|examine|investigate|research|study|explore|discover|identify|determine|decide|choose|select|pick|opt|prefer|offer|provide|supply|give|show|display|demonstrate|illustrate|exemplify|represent|depict|portray|characterize|detail|specify|indicate|point|highlight|emphasize|stress|focus|concentrate|center|target|aim|direct|lead|manage|oversee|supervise|coordinate|orchestrate|arrange|plan|schedule|allocate|assign|distribute|divide|split|separate|categorize|classify|group|sort|order|rank|prioritize|sequence)\s+/i
+      const imperativeMatch = text.match(imperativePattern)
+      if (imperativeMatch && imperativeMatch[1]) {
+        action = imperativeMatch[1].toLowerCase()
+      } else {
+        // Pattern 3: "I want/need you to [action]" - MUST extract the action verb, not "want"
+        const wantPattern = /\b(want|need|would like|please|plz)\s+(?:you|to)?\s*(?:to)?\s*(write|create|make|generate|tell|explain|describe|analyze|discuss|build|design|develop|draft|send|compose)\b/i
+        const wantMatch = text.match(wantPattern)
+        if (wantMatch && wantMatch[2]) {
+          action = wantMatch[2].toLowerCase()
+        } else if (lower.match(/\b(want|need)\s+(?:you|to)?\s*(?:to)?\s*(?:wriet|wrte|write)\b/)) {
+          // Handle typos in "I want you to wriet"
+          action = 'write'
+        } else {
+          // Pattern 4: Handle typos: "plz wrte" -> "write", "wriet" -> "write"
+          if (lower.match(/\b(plz|please)\s+(wrte|wriet|write)\b/)) {
+            action = 'write'
+          } else {
+            // Pattern 5: Extract first meaningful action verb using NLP, but ONLY from first 100 chars
+            // This prevents picking up verbs from later in the sentence like "being", "gets stuck", "highlighting"
+            const firstPart = text.substring(0, 100).toLowerCase()
+            const verbs = doc.verbs().out('array')
+            // Prioritize action verbs that appear early in the sentence
+            const actionVerbs = ['write', 'create', 'make', 'generate', 'send', 'draft', 'tell', 'explain', 'describe', 'discuss', 'analyze', 'build', 'design', 'develop', 'compose', 'produce', 'formulate', 'construct', 'establish', 'implement', 'execute', 'perform', 'deliver', 'present', 'prepare', 'organize', 'structure', 'author', 'craft', 'form', 'initiate', 'launch', 'introduce', 'propose', 'suggest', 'recommend', 'advise', 'guide', 'instruct', 'teach', 'educate', 'inform', 'clarify', 'define', 'outline', 'summarize', 'review', 'evaluate', 'assess', 'examine', 'investigate', 'research', 'study', 'explore', 'discover', 'identify', 'determine', 'decide', 'choose', 'select', 'pick', 'opt', 'prefer', 'offer', 'provide', 'supply', 'give', 'show', 'display', 'demonstrate', 'illustrate', 'exemplify', 'represent', 'depict', 'portray', 'characterize', 'detail', 'specify', 'indicate', 'point', 'highlight', 'emphasize', 'stress', 'focus', 'concentrate', 'center', 'target', 'aim', 'direct', 'lead', 'manage', 'oversee', 'supervise', 'coordinate', 'orchestrate', 'arrange', 'plan', 'schedule', 'allocate', 'assign', 'distribute', 'divide', 'split', 'separate', 'categorize', 'classify', 'group', 'sort', 'order', 'rank', 'prioritize', 'sequence']
+            
+            // Find the first action verb in the first part of the text only
+            for (const verb of verbs) {
+              const vLower = verb.toLowerCase()
+              if (actionVerbs.includes(vLower)) {
+                // Check if it appears early in the sentence (first 100 chars)
+                const verbIndex = firstPart.indexOf(vLower)
+                if (verbIndex >= 0 && verbIndex < 100) {
+                  action = vLower
+                  break
+                }
+              }
+            }
+            
+            // If no action verb found in first part, try to find the main verb from first sentence
+            if (action === 'write') {
+              // Get first sentence only (or first 100 chars)
+              const firstSentence = text.split(/[.!?]/)[0].substring(0, 100)
+              const firstSentenceDoc = doc.match(firstSentence)
+              const firstSentenceVerbs = firstSentenceDoc.verbs().out('array')
+              if (firstSentenceVerbs.length > 0) {
+                // Find first action verb in first sentence
+                for (const verb of firstSentenceVerbs) {
+                  const vLower = verb.toLowerCase()
+                  if (actionVerbs.includes(vLower)) {
+                    action = vLower
+                    break
+                  }
+                }
+                // If no action verb found, use first verb as fallback (but only if it's not a filler)
+                if (action === 'write' && firstSentenceVerbs.length > 0) {
+                  const firstVerb = firstSentenceVerbs[0].toLowerCase()
+                  // Skip filler verbs
+                  if (!['want', 'need', 'think', 'believe', 'know', 'see', 'get', 'have', 'make', 'do', 'go', 'come', 'say', 'tell', 'give', 'take', 'put', 'let', 'help', 'try', 'use', 'work', 'call', 'ask', 'seem', 'feel', 'leave', 'keep', 'turn', 'start', 'show', 'hear', 'play', 'run', 'move', 'like', 'live', 'bring', 'happen', 'sit', 'stand', 'lose', 'pay', 'meet', 'include', 'continue', 'set', 'learn', 'change', 'lead', 'understand', 'watch', 'follow', 'stop', 'speak', 'read', 'allow', 'add', 'spend', 'grow', 'open', 'walk', 'win', 'offer', 'remember', 'love', 'consider', 'appear', 'buy', 'wait', 'serve', 'die', 'send', 'build', 'stay', 'fall', 'cut', 'reach', 'kill', 'raise', 'pass', 'sell', 'decide', 'return', 'develop', 'carry', 'break', 'receive', 'agree', 'support', 'hit', 'produce', 'eat', 'cover', 'catch', 'draw', 'choose', 'being', 'gets', 'stuck', 'highlighting', 'calculates', 'posts', 'am', 'is', 'are', 'was', 'were'].includes(firstVerb)) {
+                    action = firstVerb
+                  }
+                }
+              } else if (verbs.length > 0) {
+                // Last resort: use first verb from entire text, but only if it's an action verb
+                const firstVerb = verbs[0].toLowerCase()
+                if (actionVerbs.includes(firstVerb)) {
+                  action = firstVerb
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  // Extract topic - handle questions and statements differently
+  let topic = ''
+  
+  if (isQuestionPrompt) {
+    // For questions, extract the main subject/topic from the question
+    // "Who do you think India should refer to resolve issue of tariff with Trump"
+    // -> extract "India should refer to resolve issue of tariff with Trump"
+    
+    // Pattern 1: "Who/What/How [subject] [verb] [rest of question]"
+    const questionPattern = /^(?:who|what|where|when|why|how|which|whom|whose|do|does|did|is|are|was|were|can|could|should|would|will)\s+(?:do|does|did|is|are|was|were|you|we|they|it|he|she)?\s*(?:think|believe|suggest|recommend|refer|consult|approach|contact|use|utilize|should|can|could|will|would)?\s*([^?]+?)(?:\s*\?|$)/i
+    const questionMatch = text.match(questionPattern)
+    if (questionMatch && questionMatch[1]) {
+      topic = questionMatch[1].trim()
+      // Remove question words that might be at the start
+      topic = topic.replace(/^(do|does|did|is|are|was|were|you|we|they|it|he|she|think|believe|suggest|recommend)\s+/i, '')
+      // Remove trailing "to" if it's just a preposition
+      topic = topic.replace(/\s+to\s*$/i, '').trim()
+    }
+    
+    // If still no topic, extract everything after the question word
+    if (!topic || topic.length < 5) {
+      const simpleQuestionPattern = /^(?:who|what|where|when|why|how|which|whom|whose|do|does|did|is|are|was|were|can|could|should|would|will)\s+(.+?)(?:\s*\?|$)/i
+      const simpleMatch = text.match(simpleQuestionPattern)
+      if (simpleMatch && simpleMatch[1]) {
+        topic = simpleMatch[1].trim()
+        // Remove common question fillers
+        topic = topic.replace(/^(do|does|did|you|we|they|think|believe|suggest|recommend)\s+/i, '')
+      }
+    }
+  } else {
+    // For statements, use existing patterns
+    // Pattern 1: "it's my responsibility to [action] [topic]" - extract full context
+    const responsibilityTopicPattern = /(?:it'?s|it is)\s+my\s+responsibility\s+to\s+(?:write|create|make|generate|send|draft|help|assist)\s+([^.,!?\n]+?)(?:\s*$|\.|,|!|\?)/i
+    const responsibilityTopicMatch = text.match(responsibilityTopicPattern)
+    if (responsibilityTopicMatch && responsibilityTopicMatch[1]) {
+      topic = responsibilityTopicMatch[1].trim()
+      // Clean up topic
+      topic = topic.replace(/^(a|an|the)\s+(email|letter|message|note|draft|article|report|blog|post|content|story|narrative|guide|tutorial|summary|outline|presentation|code|script|function)\s+/i, '$2 ')
+      // Remove trailing "help me with that" or similar
+      topic = topic.replace(/\s+(help|assist|with|that|this|me|us)\s*$/i, '').trim()
+    }
+    
+    // Pattern 2: "write a [adjective] [format] to [recipient] about [topic]"
+    if (!topic) {
+      const fullContextPattern = /(?:write|create|make|generate|send|draft)\s+((?:a|an|the)?\s*(?:cold\s+)?(?:funny|serious|professional|casual|formal|informal|engaging|clear|short|long|brief|detailed)?\s*(?:email|letter|message|note|draft|article|report|blog|post|content|story|narrative|guide|tutorial|summary|outline|presentation|code|script|function)?\s*(?:to|for)\s+[^.,!?\n]+?)(?:\s*$|\.|,|!|\?)/i
+      const fullContextMatch = text.match(fullContextPattern)
+      if (fullContextMatch && fullContextMatch[1]) {
+        topic = fullContextMatch[1].trim()
+        topic = topic.replace(/^(a|an|the)\s+(email|letter|message|note|draft|article|report|blog|post|content|story|narrative|guide|tutorial|summary|outline|presentation|code|script|function)\s+/i, '$2 ')
+        if (topic && topic.length > 5) {
+          // Use this full context
+        } else {
+          topic = ''
+        }
+      }
+    }
+    
+    // Pattern 3: "write about X" (if full context not found)
+    if (!topic) {
+      const aboutPattern = /(?:write|create|make|generate|tell|explain|describe|discuss)\s+(?:about|on|regarding)\s+([^.,!?\n]+?)(?:\s*$|\.|,|!|\?)/i
+      const aboutMatch = text.match(aboutPattern)
+      if (aboutMatch && aboutMatch[1]) {
+        topic = aboutMatch[1].trim()
+      }
+    }
+    
+    // Pattern 4: "write X" (direct object - capture everything after action, but stop at filler phrases)
+    if (!topic) {
+      // Improved pattern that stops at "make it", "and stuff", etc.
+      const directPattern = /(?:write|create|make|generate|tell|explain|describe|discuss|plz|please)\s+(?:wrte|wriet|write)?\s*(?:abt|about)?\s*((?:a|an|the)?\s*[^.,!?\n]+?)(?:\s+(?:make\s+it|and\s+stuff|not\s+boring|good|better|gud|stuff|things|help|assist|with|that|this)\s*$|\s*$|\.|,|!|\?)/i
+      const directMatch = text.match(directPattern)
+      if (directMatch && directMatch[1]) {
+        topic = directMatch[1].trim()
+        topic = topic.replace(/^(a|an|the)\s+(email|letter|message|note|draft|article|report|blog|post|content|story|narrative|guide|tutorial|summary|outline|presentation|code|script|function)\s+/i, '$2 ')
+        // Remove trailing filler words
+        topic = topic.replace(/\s+(for|to|with|and|or|make|it|good|better|gud|stuff|things|topics|subject|help|assist|that|this|me|us)\s*$/i, '').trim()
+        // For "plz wrte abt tech future ai robots and stuff make it gud not boring"
+        // Extract just "tech future ai robots"
+        if (topic.includes('and stuff') || topic.includes('make it') || topic.includes('not boring')) {
+          topic = topic.split(/\s+(?:and\s+stuff|make\s+it|not\s+boring|gud)\s*/i)[0].trim()
+        }
+      }
+    }
+    
+    // Clean up topic
+    if (topic) {
+      topic = topic.replace(/^(write|create|make|generate|tell|explain|describe|discuss)\s+/i, '')
+      topic = topic.replace(/^(a|an|the|short|brief|long|detailed|article|report|blog|summary|content)\s+/i, '')
+      topic = topic.trim()
     }
   }
 

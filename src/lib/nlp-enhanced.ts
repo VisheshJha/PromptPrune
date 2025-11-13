@@ -235,29 +235,59 @@ export function improveClarityNLP(sentence: string): string {
 
 /**
  * Extract role from prompt using NLP
+ * Handles patterns like:
+ * - "as a sales rep in an electronic company"
+ * - "I am a marketing manager"
+ * - "it's my responsibility as a [role]"
  */
 export function extractRoleNLP(text: string): string | null {
   const doc = nlp(text)
   
-  // Look for role patterns
+  // Pattern 1: "as a [role] in [a/an] [company/industry]" - capture full context
+  const roleInCompanyPattern = /(?:as|being)\s+(?:an?|the)\s+([^.,!?\n]+?)\s+in\s+(?:an?|the)\s+([^.,!?\n]+?)(?:\s+(?:it|it's|my|,|\.|!|\?|$))/i
+  const roleInCompanyMatch = text.match(roleInCompanyPattern)
+  if (roleInCompanyMatch && roleInCompanyMatch[1] && roleInCompanyMatch[2]) {
+    const role = roleInCompanyMatch[1].trim()
+    const company = roleInCompanyMatch[2].trim()
+    // Stop at common words that indicate end of role phrase
+    const roleClean = role.split(/\s+(?:it|it's|my|responsibility|who|that|,|\.|!|\?)/i)[0].trim()
+    const companyClean = company.split(/\s+(?:it|it's|my|responsibility|company|industry|who|that|,|\.|!|\?)/i)[0].trim()
+    if (roleClean.length > 2 && companyClean.length > 2) {
+      return `${roleClean} in ${companyClean}`
+    }
+  }
+  
+  // Pattern 2: "it's my responsibility as a [role]"
+  const responsibilityPattern = /(?:it'?s|it is)\s+my\s+responsibility\s+(?:as|to be|being)\s+(?:an?|the)?\s+([^.,!?\n]+?)(?:\s+(?:to|in|,|\.|!|\?|$))/i
+  const responsibilityMatch = text.match(responsibilityPattern)
+  if (responsibilityMatch && responsibilityMatch[1]) {
+    const role = responsibilityMatch[1].trim()
+    if (role.length > 2 && role.length < 50) {
+      return role
+    }
+  }
+  
+  // Pattern 3: Standard role patterns
   const rolePatterns = [
-    /(?:act as|you are|role:|as a|be a)\s+([^.,!?\n]+)/i,
-    /(?:as|being)\s+(?:an?|the)\s+([^.,!?\n]+?)(?:\s+(?:who|that|,|\.|!|\?))/i,
+    /(?:act as|you are|role:|as a|be a|I am|I'm)\s+([^.,!?\n]+?)(?:\s+(?:in|who|that|,|\.|!|\?|$))/i,
+    /(?:as|being)\s+(?:an?|the)\s+([^.,!?\n]+?)(?:\s+(?:in|who|that|,|\.|!|\?|$))/i,
   ]
   
   for (const pattern of rolePatterns) {
     const match = text.match(pattern)
     if (match && match[1]) {
       const role = match[1].trim()
-      if (role.length > 2 && role.length < 50) {
-        return role
+      // Stop at common words that indicate end of role phrase
+      const roleClean = role.split(/\s+(?:it|it's|my|responsibility|in|who|that|,|\.|!|\?)/i)[0].trim()
+      if (roleClean.length > 2 && roleClean.length < 50) {
+        return roleClean
       }
     }
   }
   
   // Try to extract from nouns if no explicit role
   const nouns = doc.nouns().out("array")
-  const roleKeywords = ["expert", "specialist", "professional", "developer", "writer", "analyst"]
+  const roleKeywords = ["expert", "specialist", "professional", "developer", "writer", "analyst", "rep", "representative", "manager", "director"]
   
   for (const noun of nouns) {
     if (roleKeywords.some(keyword => noun.toLowerCase().includes(keyword))) {
