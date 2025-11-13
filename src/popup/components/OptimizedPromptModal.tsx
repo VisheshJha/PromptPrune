@@ -27,9 +27,12 @@ export function OptimizedPromptModal({
   // Update framework output when framework changes
   useEffect(() => {
     if (originalPrompt.trim()) {
-      const frameworkOutput = applyFramework(originalPrompt, selectedFramework)
-      // Use the framework output directly (already processed and corrected)
-      setFrameworkOptimized(frameworkOutput.optimized)
+      applyFramework(originalPrompt, selectedFramework).then(frameworkOutput => {
+        // Use the framework output directly (already processed and corrected)
+        setFrameworkOptimized(frameworkOutput.optimized)
+      }).catch(err => {
+        console.error("Error applying framework:", err)
+      })
     }
   }, [selectedFramework, originalPrompt])
 

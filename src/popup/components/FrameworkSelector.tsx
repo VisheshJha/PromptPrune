@@ -30,26 +30,26 @@ export function FrameworkSelector({ originalPrompt, onFrameworkSelected }: Frame
     
     try {
       // Rank frameworks by how well they fit the prompt
-      const ranked = rankFrameworks(originalPrompt)
-      setRankedFrameworks(ranked)
-      
-      // Generate all framework outputs (for compatibility)
-      const outputs = getAllFrameworkOutputs(originalPrompt)
-      setFrameworkOutputs(outputs)
-      setLoading(false)
-      
-      // Analyze token counts for each framework (with error handling)
-      analyzeFrameworkTokens(originalPrompt)
-        .then((analyses: FrameworkTokenAnalysis[]) => {
-          setTokenAnalyses(analyses)
-          setAnalyzing(false)
-        })
-        .catch((err: unknown) => {
-          console.error("Failed to analyze tokens:", err)
-          setAnalyzing(false)
-          // Continue without token analysis if it fails
-          setTokenAnalyses([])
-        })
+      rankFrameworks(originalPrompt).then(ranked => {
+        setRankedFrameworks(ranked)
+        
+        // Generate all framework outputs (for compatibility)
+        return getAllFrameworkOutputs(originalPrompt)
+      }).then(outputs => {
+        setFrameworkOutputs(outputs)
+        setLoading(false)
+        
+        // Analyze token counts for each framework (with error handling)
+        return analyzeFrameworkTokens(originalPrompt)
+      }).then((analyses: FrameworkTokenAnalysis[]) => {
+        setTokenAnalyses(analyses)
+        setAnalyzing(false)
+      }).catch((err: unknown) => {
+        console.error("Failed to analyze tokens:", err)
+        setAnalyzing(false)
+        // Continue without token analysis if it fails
+        setTokenAnalyses([])
+      })
     } catch (error) {
       console.error("Error in FrameworkSelector:", error)
       setLoading(false)

@@ -32,7 +32,7 @@ export interface FrameworkTokenAnalysis {
 export async function analyzeFrameworkTokens(
   originalPrompt: string
 ): Promise<FrameworkTokenAnalysis[]> {
-  const frameworks = getAllFrameworkOutputs(originalPrompt)
+  const frameworks = await getAllFrameworkOutputs(originalPrompt)
   const analyses: FrameworkTokenAnalysis[] = []
   
   for (const frameworkOutput of frameworks) {

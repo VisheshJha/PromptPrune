@@ -36,29 +36,37 @@ export function SmartOptimizer({ originalPrompt, onOptimized, onFrameworkSelecte
     }
 
     // Rank frameworks to find the best fit
-    const rankings = rankFrameworks(originalPrompt)
-    const topRanked = rankings.length > 0 ? rankings[0] : null
-    
-    if (topRanked) {
-      setBestFitFramework(topRanked.framework)
-      // Auto-select best fit if no manual selection exists
-      setSelectedFramework(prev => prev || topRanked.framework)
-    } else {
-      // Fallback to CREATE if ranking fails
+    rankFrameworks(originalPrompt).then(rankings => {
+      const topRanked = rankings.length > 0 ? rankings[0] : null
+      
+      if (topRanked) {
+        setBestFitFramework(topRanked.framework)
+        // Auto-select best fit if no manual selection exists
+        setSelectedFramework(prev => prev || topRanked.framework)
+      } else {
+        // Fallback to CREATE if ranking fails
+        setBestFitFramework("create")
+        setSelectedFramework(prev => prev || "create")
+      }
+    }).catch(err => {
+      console.error("Error ranking frameworks:", err)
       setBestFitFramework("create")
       setSelectedFramework(prev => prev || "create")
-    }
+    })
   }, [originalPrompt])
 
   // Apply selected framework when it changes
   useEffect(() => {
     if (selectedFramework && originalPrompt.trim()) {
-      const frameworkOutput = applyFramework(originalPrompt, selectedFramework)
-      setFrameworkPrompt(frameworkOutput.optimized)
-      // Notify parent component so Savings tab can update
-      if (onFrameworkSelected) {
-        onFrameworkSelected(frameworkOutput.optimized)
-      }
+      applyFramework(originalPrompt, selectedFramework).then(frameworkOutput => {
+        setFrameworkPrompt(frameworkOutput.optimized)
+        // Notify parent component so Savings tab can update
+        if (onFrameworkSelected) {
+          onFrameworkSelected(frameworkOutput.optimized)
+        }
+      }).catch(err => {
+        console.error("Error applying framework:", err)
+      })
     } else if (!originalPrompt.trim()) {
       setFrameworkPrompt("")
       if (onFrameworkSelected) {
@@ -113,39 +121,49 @@ export function SmartOptimizer({ originalPrompt, onOptimized, onFrameworkSelecte
         }
       } else {
         // Fallback: if no framework selected, use best fit
-        const rankings = rankFrameworks(originalPrompt)
-        const bestFit = rankings.length > 0 ? rankings[0] : null
-        
-        if (bestFit) {
-          setAnalyzed(bestFit.output.optimized)
-          onOptimized(bestFit.output.optimized)
-          setShowModal(true)
+        rankFrameworks(originalPrompt).then(rankings => {
+          const bestFit = rankings.length > 0 ? rankings[0] : null
           
-          // Track savings
-          try {
-            const [originalCounts, frameworkCounts] = await Promise.all([
+          if (bestFit) {
+            setAnalyzed(bestFit.output.optimized)
+            onOptimized(bestFit.output.optimized)
+            setShowModal(true)
+            
+            // Track savings
+            Promise.all([
               getAllTokenCounts(originalPrompt),
               getAllTokenCounts(bestFit.output.optimized),
-            ])
-            const originalAvg = getAverageTokenCount(originalCounts)
-            const frameworkAvg = getAverageTokenCount(frameworkCounts)
-            const reduction = originalAvg - frameworkAvg
-            
-            setAnalysisStats({
-              reduction: reduction > 0 ? reduction : 0,
-              reductionPercent: originalAvg > 0 ? Math.round((reduction / originalAvg) * 100) : 0,
+            ]).then(([originalCounts, frameworkCounts]) => {
+              const originalAvg = getAverageTokenCount(originalCounts)
+              const frameworkAvg = getAverageTokenCount(frameworkCounts)
+              const reduction = originalAvg - frameworkAvg
+              
+              setAnalysisStats({
+                reduction: reduction > 0 ? reduction : 0,
+                reductionPercent: originalAvg > 0 ? Math.round((reduction / originalAvg) * 100) : 0,
+              })
+              
+              return saveOptimizationRecord(
+                originalPrompt,
+                bestFit.output.optimized,
+                originalAvg,
+                frameworkAvg,
+                "average"
+              )
+            }).catch(err => {
+              console.warn("Failed to track savings:", err)
             })
-          } catch (err) {
-            console.warn("Failed to track savings:", err)
+          } else {
+            setError("Unable to analyze prompt")
           }
-        } else {
-          setError("Unable to analyze prompt")
-        }
+        }).catch(err => {
+          setError(err instanceof Error ? err.message : "Analysis failed")
+        }).finally(() => {
+          setLoading(false)
+        })
       }
-    } catch (err) {
-      console.error("Analysis error:", err)
-      setError(err instanceof Error ? err.message : "Failed to analyze prompt")
-    } finally {
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Analysis failed")
       setLoading(false)
     }
   }

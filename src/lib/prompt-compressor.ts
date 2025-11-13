@@ -32,22 +32,52 @@ export function compressPrompt(
 
   let compressed = prompt.trim()
 
-  // First, fix spelling using intelligent processor
+  // First, fix ONLY obvious spelling mistakes from dictionary (safe corrections)
   const spellChecked = intelligentSpellCheck(compressed)
-  compressed = spellChecked.corrected
+  // Always use spell-checked version if corrections were made (they're from dictionary only, safe)
+  if (spellChecked.corrections.length > 0) {
+    compressed = spellChecked.corrected
+  }
 
   // Remove redundant phrases
   if (removeRedundancy) {
     compressed = removeRedundantPhrases(compressed)
   }
 
-  // Simplify common phrases
+  // Simplify common phrases (but preserve meaning)
   if (simplifyPhrases) {
     compressed = simplifyCommonPhrases(compressed)
   }
 
   // Remove excessive whitespace
   compressed = compressed.replace(/\s+/g, " ").trim()
+  
+  // Ensure we didn't break the text - if result is too short or nonsensical, return original
+  const originalLength = prompt.length
+  const compressedLength = compressed.length
+  
+  if (compressedLength < originalLength * 0.3) {
+    // If compressed is less than 30% of original, it's probably broken
+    console.warn("[compressPrompt] Compression too aggressive, returning original")
+    return prompt
+  }
+  
+  // Check if result makes sense - if it has too many single-letter words, it's probably broken
+  const words = compressed.split(/\s+/)
+  const singleLetterWords = words.filter(w => w.length === 1 && /[a-zA-Z]/.test(w)).length
+  if (words.length > 0 && singleLetterWords > words.length * 0.2) {
+    // If more than 20% are single letters, return original
+    console.warn("[compressPrompt] Too many single-letter words, returning original")
+    return prompt
+  }
+  
+  // Check for nonsensical patterns like "A and on to write a could email"
+  // If we see too many single-letter words followed by common words, it's broken
+  const suspiciousPattern = /(^|\s)([a-z]\s+){3,}/i.test(compressed)
+  if (suspiciousPattern && singleLetterWords > 2) {
+    console.warn("[compressPrompt] Suspicious pattern detected, returning original")
+    return prompt
+  }
 
   // If targetLength (word count) is specified, calculate maxLength from it
   let effectiveMaxLength = maxLength
@@ -84,26 +114,29 @@ export function compressPrompt(
 function removeRedundantPhrases(text: string): string {
   let cleaned = text
 
-  // Remove redundant conjunctions
+  // Remove redundant conjunctions (only if they're truly redundant)
   cleaned = cleaned.replace(/\b(and|or|but)\s+(and|or|but)\s+/gi, "$1 ")
 
-  // Remove duplicate words in sequence
-  cleaned = cleaned.replace(/\b(\w+)\s+\1\b/gi, "$1")
+  // Remove duplicate words in sequence (but be VERY careful - only exact duplicates)
+  // Don't remove if it's part of a valid phrase
+  cleaned = cleaned.replace(/\b(\w+)\s+\1\b(?=\s|$)/gi, "$1")
 
-  // Remove filler phrases
+  // Remove filler phrases (but preserve meaning)
   const fillerPhrases = [
     /\b(you know|I mean|like|um|uh)\b/gi,
     /\b(in other words|that is to say|to put it simply)\b/gi,
     /\b(please note that|it is important to note that)\b/gi,
-    /\b(make sure to|be sure to|don't forget to)\b/gi,
   ]
 
   fillerPhrases.forEach((pattern) => {
-    cleaned = cleaned.replace(pattern, "")
+    cleaned = cleaned.replace(pattern, " ")
   })
 
-  // Remove redundant adjectives
+  // Remove redundant adjectives (only if truly redundant)
   cleaned = cleaned.replace(/\b(very|really|quite|extremely|incredibly)\s+(very|really|quite|extremely|incredibly)\s+/gi, "very ")
+
+  // Clean up multiple spaces
+  cleaned = cleaned.replace(/\s+/g, " ").trim()
 
   return cleaned
 }
