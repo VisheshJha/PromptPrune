@@ -24,8 +24,14 @@ export function parseStructuredPrompt(prompt: string): StructuredPrompt {
     isStructured: false
   }
   
+  // Handle null, undefined, or empty prompts
+  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
+    return result
+  }
+  
   // Check if prompt is in structured format (has "Field:" pattern)
-  const structuredPattern = /^(\w+):\s*(.+?)(?:\n|$)/gm
+  // Updated pattern to also match empty values (e.g., "Role:\nAction:")
+  const structuredPattern = /^(\w+):\s*(.*?)(?:\n|$)/gm
   const matches = Array.from(prompt.matchAll(structuredPattern))
   
   if (matches.length >= 2) {
@@ -34,18 +40,39 @@ export function parseStructuredPrompt(prompt: string): StructuredPrompt {
     
     matches.forEach(match => {
       const field = match[1].toLowerCase().trim()
-      const value = match[2].trim()
+      const value = (match[2] || '').trim() // Handle empty values
+      
+      // Skip if value is empty (template field with no value)
+      if (!value) {
+        return
+      }
       
       switch (field) {
         case "role":
-          result.role = value
+          // Clean role - remove "You are" if present
+          result.role = value.replace(/^you are\s+/i, "").trim()
           break
         case "action":
         case "task":
-          result.action = value
+          // Clean action - remove trailing semicolons and "about" phrases
+          // IMPORTANT: Don't confuse "Format: text" with action - if value is just "text" or starts with "format:", skip it
+          const valueLower = value.toLowerCase().trim()
+          if (valueLower.startsWith('format:') || valueLower === 'text' || valueLower === 'format' || valueLower.match(/^format\s*:/)) {
+            // This is actually a format field, not an action - don't set action
+            break
+          }
+          // Also check if it's a format value that got mis-parsed (e.g., "Format: text" was parsed as "Action: Format: text")
+          if (valueLower.includes('format:') || (valueLower === 'text' && field === 'action')) {
+            break
+          }
+          result.action = value.replace(/[;:]+$/, "").replace(/\s+about\s+.*$/i, "").trim()
+          break
+        case "format":
+          // Handle format field properly
+          result.format = value.trim()
           break
         case "topic":
-          result.topic = value
+          result.topic = value.trim()
           break
         case "audience":
           result.audience = value
