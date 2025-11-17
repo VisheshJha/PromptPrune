@@ -10,11 +10,17 @@ import nlp from "compromise"
  */
 const COMMON_WORDS = new Set([
   // Action words
-  'write', 'create', 'make', 'generate', 'tell', 'explain', 'describe', 'discuss',
-  'about', 'on', 'for', 'to', 'with', 'and', 'or', 'the', 'a', 'an',
+  'write', 'writes', 'writing', 'written', 'create', 'creates', 'creating', 'created',
+  'make', 'makes', 'making', 'made', 'generate', 'generates', 'generating', 'generated',
+  'tell', 'tells', 'telling', 'told', 'explain', 'explains', 'explaining', 'explained',
+  'describe', 'describes', 'describing', 'described', 'discuss', 'discusses', 'discussing', 'discussed',
+  // Common words
+  'about', 'on', 'for', 'to', 'with', 'and', 'or', 'the', 'a', 'an', 'want', 'wants', 'wanted',
+  'email', 'emails', 'emailed', 'this', 'that', 'these', 'those', 'i', 'you', 'he', 'she', 'it', 'we', 'they',
   // Common nouns
-  'article', 'report', 'blog', 'post', 'content', 'summary', 'guide', 'tutorial',
-  'topic', 'subject', 'information', 'data', 'analysis', 'research',
+  'article', 'articles', 'report', 'reports', 'blog', 'blogs', 'post', 'posts', 'content', 'contents',
+  'summary', 'summaries', 'guide', 'guides', 'tutorial', 'tutorials',
+  'topic', 'topics', 'subject', 'subjects', 'information', 'data', 'analysis', 'analyses', 'research',
   // Common adjectives
   'short', 'long', 'brief', 'detailed', 'comprehensive', 'clear', 'engaging',
   'professional', 'casual', 'friendly', 'technical', 'general',
@@ -93,11 +99,19 @@ export function intelligentSpellCheck(text: string): {
   })
 
   // Expanded common misspellings dictionary - ONLY fix obvious typos
+  // IMPORTANT: Only include actual misspellings, not valid words
   const commonMisspellings: Record<string, string> = {
-    // Obvious typos
+    // Obvious typos for "write"
     'wriet': 'write',
     'wrte': 'write',
     'writng': 'writing',
+    'writte': 'write', // User's typo
+    'writting': 'writing',
+    'writen': 'written',
+    // Obvious typos for "email"
+    'emial': 'email', // User's typo
+    'e-mail': 'email',
+    'e mail': 'email',
     'writ': 'write',
     'abt': 'about',
     'abut': 'about',

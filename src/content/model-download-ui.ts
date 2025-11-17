@@ -42,41 +42,60 @@ export function showModelDownloadPrompt(): Promise<boolean> {
     `
     
     content.innerHTML = `
-      <h2 style="margin: 0 0 16px 0; color: #10b981; font-size: 24px;">
-        🚀 Enable Smart Analysis
-      </h2>
-      <p style="margin: 0 0 20px 0; color: #374151; line-height: 1.6;">
-        Download AI models (~163MB) for intelligent prompt optimization?
-      </p>
-      <ul style="margin: 0 0 24px 0; padding-left: 24px; color: #6b7280; line-height: 1.8;">
-        <li>✅ Works completely offline</li>
-        <li>✅ One-time download (cached forever)</li>
-        <li>✅ Fast and accurate analysis</li>
-        <li>✅ Detects sensitive data automatically</li>
-      </ul>
+      <div style="text-align: center; margin-bottom: 24px;">
+        <div style="font-size: 48px; margin-bottom: 16px;">🚀</div>
+        <h2 style="margin: 0 0 8px 0; color: #111827; font-size: 24px; font-weight: 700;">
+          Enable Smart Analysis
+        </h2>
+        <p style="margin: 0; color: #6b7280; font-size: 14px;">
+          Download AI models for intelligent prompt optimization
+        </p>
+      </div>
+      <div style="background: #f9fafb; border-radius: 12px; padding: 20px; margin-bottom: 24px;">
+        <ul style="margin: 0; padding: 0; list-style: none; color: #374151; line-height: 2;">
+          <li style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+            <span style="color: #10b981; font-size: 20px;">✓</span>
+            <span>Works completely offline</span>
+          </li>
+          <li style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+            <span style="color: #10b981; font-size: 20px;">✓</span>
+            <span>One-time download (~160MB)</span>
+          </li>
+          <li style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+            <span style="color: #10b981; font-size: 20px;">✓</span>
+            <span>Fast and accurate analysis</span>
+          </li>
+          <li style="display: flex; align-items: center; gap: 12px;">
+            <span style="color: #10b981; font-size: 20px;">✓</span>
+            <span>Automatic sensitive data detection</span>
+          </li>
+        </ul>
+      </div>
       <div style="display: flex; gap: 12px;">
         <button id="download-yes" style="
           flex: 1;
-          padding: 12px 24px;
-          background: #10b981;
+          padding: 14px 24px;
+          background: linear-gradient(135deg, #10b981 0%, #059669 100%);
           color: white;
           border: none;
-          border-radius: 6px;
+          border-radius: 8px;
           cursor: pointer;
           font-weight: 600;
-          font-size: 14px;
+          font-size: 15px;
+          transition: all 0.2s;
+          box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
         ">Download & Enable</button>
         <button id="download-no" style="
-          flex: 1;
-          padding: 12px 24px;
-          background: #f3f4f6;
-          color: #374151;
-          border: none;
-          border-radius: 6px;
+          padding: 14px 24px;
+          background: #ffffff;
+          color: #6b7280;
+          border: 2px solid #e5e7eb;
+          border-radius: 8px;
           cursor: pointer;
           font-weight: 600;
-          font-size: 14px;
-        ">Use Basic Mode</button>
+          font-size: 15px;
+          transition: all 0.2s;
+        ">Skip</button>
       </div>
     `
     
@@ -157,20 +176,23 @@ export function showDownloadProgress(progress: DownloadProgress): void {
     return
   }
   
+  // Hide technical model names from user
+  const statusText = progress.status === 'downloading' ? '📥 Downloading AI models...' : '⏳ Preparing...'
+  
   progressBar.innerHTML = `
-    <div style="color: #374151; font-weight: 600; margin-bottom: 8px;">
-      ${progress.status === 'downloading' ? '📥 Downloading Models...' : '⏳ Preparing...'}
+    <div style="color: #374151; font-weight: 600; margin-bottom: 8px; font-size: 14px;">
+      ${statusText}
     </div>
     <div style="background: #f3f4f6; border-radius: 4px; height: 8px; margin-bottom: 8px; overflow: hidden;">
       <div style="
-        background: #10b981;
+        background: linear-gradient(90deg, #10b981 0%, #059669 100%);
         height: 100%;
         width: ${progress.progress}%;
         transition: width 0.3s;
       "></div>
     </div>
     <div style="color: #6b7280; font-size: 13px;">
-      ${progress.message || `${Math.round(progress.progress)}%`}
+      ${Math.round(progress.progress)}% complete
     </div>
   `
 }

@@ -5,9 +5,7 @@
 
 export interface DraggableGroup {
   iconButton: HTMLElement
-  fieldButtons: HTMLElement
   smartButton?: HTMLElement
-  basicButton?: HTMLElement
   textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement
 }
 
@@ -23,12 +21,10 @@ let currentGroup: DraggableGroup | null = null
 export function makeButtonsDraggable(
   textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement,
   iconButton: HTMLElement,
-  fieldButtons: HTMLElement,
-  smartButton?: HTMLElement,
-  basicButton?: HTMLElement
+  smartButton?: HTMLElement
 ): void {
   // Store group reference
-  const group: DraggableGroup = { iconButton, fieldButtons, smartButton, basicButton, textArea }
+  const group: DraggableGroup = { iconButton, smartButton, textArea }
   draggableGroups.set(textArea, group)
 
   // Add drag handle to icon button
@@ -81,48 +77,15 @@ export function makeButtonsDraggable(
       iconHost.style.bottom = "auto"
     }
 
-    // Update field buttons position (relative to icon)
-    const fieldHost = currentGroup.fieldButtons.shadowRoot?.host as HTMLElement
-    if (fieldHost) {
-      fieldHost.style.left = `${constrainedX}px`
-      fieldHost.style.top = `${constrainedY + 36}px` // 28px icon + 8px gap
-      fieldHost.style.right = "auto"
-      fieldHost.style.bottom = "auto"
-    }
-    
-    // Update smart button position (relative to icon - always to the right)
+    // Update smart button position (relative to icon - always below)
     if (currentGroup.smartButton) {
       const smartHost = currentGroup.smartButton.shadowRoot?.host as HTMLElement
       if (smartHost) {
-        const iconWidth = 28 // P icon width
-        smartHost.style.left = `${constrainedX + iconWidth + 8}px` // To the right of icon, 8px gap
-        smartHost.style.top = `${constrainedY}px` // Same top as icon
+        const iconHeight = 28 // P icon height
+        smartHost.style.left = `${constrainedX}px` // Same left as icon
+        smartHost.style.top = `${constrainedY + iconHeight + 8}px` // Below icon with 8px gap
         smartHost.style.right = "auto"
         smartHost.style.bottom = "auto"
-      }
-    }
-    
-    // Update basic button position (relative to icon - always below smart button)
-    if (currentGroup.basicButton) {
-      const basicHost = currentGroup.basicButton.shadowRoot?.host as HTMLElement
-      if (basicHost) {
-        const iconWidth = 28 // P icon width
-        basicHost.style.left = `${constrainedX + iconWidth + 8}px` // Same left as smart button
-        basicHost.style.top = `${constrainedY + 36}px` // Below smart button (28px button + 8px gap)
-        basicHost.style.right = "auto"
-        basicHost.style.bottom = "auto"
-      }
-    }
-    
-    // Update field buttons position (relative to icon - below basic button)
-    if (currentGroup.fieldButtons) {
-      const fieldHost = currentGroup.fieldButtons.shadowRoot?.host as HTMLElement
-      if (fieldHost) {
-        const iconWidth = 28
-        fieldHost.style.left = `${constrainedX + iconWidth + 8}px` // Same left as analyze buttons
-        fieldHost.style.top = `${constrainedY + 72}px` // Below basic button (36px + 36px)
-        fieldHost.style.right = "auto"
-        fieldHost.style.bottom = "auto"
       }
     }
   }
@@ -166,7 +129,6 @@ export function makeButtonsDraggable(
     if (saved) {
       const position = JSON.parse(saved)
       const iconHost = iconButton.shadowRoot?.host as HTMLElement
-      const fieldHost = fieldButtons.shadowRoot?.host as HTMLElement
       
       if (iconHost && position.x && position.y) {
         iconHost.style.left = `${position.x}px`
@@ -175,11 +137,16 @@ export function makeButtonsDraggable(
         iconHost.style.bottom = "auto"
       }
       
-      if (fieldHost && position.x && position.y) {
-        fieldHost.style.left = `${position.x}px`
-        fieldHost.style.top = `${position.y + 36}px`
-        fieldHost.style.right = "auto"
-        fieldHost.style.bottom = "auto"
+      // Update smart button position relative to icon (below)
+      if (smartButton) {
+        const smartHost = smartButton.shadowRoot?.host as HTMLElement
+        if (smartHost && position.x && position.y) {
+          const iconHeight = 28
+          smartHost.style.left = `${position.x}px`
+          smartHost.style.top = `${position.y + iconHeight + 8}px`
+          smartHost.style.right = "auto"
+          smartHost.style.bottom = "auto"
+        }
       }
     }
   } catch (e) {
@@ -195,7 +162,7 @@ export function resetButtonPositions(textArea: HTMLTextAreaElement | HTMLDivElem
   if (!group) return
 
   const iconHost = group.iconButton.shadowRoot?.host as HTMLElement
-  const fieldHost = group.fieldButtons.shadowRoot?.host as HTMLElement
+  const smartHost = group.smartButton?.shadowRoot?.host as HTMLElement
 
   if (iconHost) {
     iconHost.style.left = "auto"
@@ -204,11 +171,11 @@ export function resetButtonPositions(textArea: HTMLTextAreaElement | HTMLDivElem
     iconHost.style.bottom = "auto"
   }
 
-  if (fieldHost) {
-    fieldHost.style.left = "auto"
-    fieldHost.style.top = "auto"
-    fieldHost.style.right = "auto"
-    fieldHost.style.bottom = "auto"
+  if (smartHost) {
+    smartHost.style.left = "auto"
+    smartHost.style.top = "auto"
+    smartHost.style.right = "auto"
+    smartHost.style.bottom = "auto"
   }
 
   sessionStorage.removeItem('promptprune-button-position')

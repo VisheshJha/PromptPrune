@@ -98,6 +98,16 @@ const DETECTION_PATTERNS = {
     severity: 'high' as const,
     suggestion: '🚨 Medical record/patient ID detected - DO NOT SHARE - HIPAA violation risk'
   },
+  windowsKey: {
+    pattern: /\b(?:windows\s*(?:activation|product|license|serial)\s*key|activation\s*key|product\s*key|license\s*key|serial\s*key)\s*[:=]?\s*([A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5})\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 Windows activation key detected - DO NOT SHARE - Software license violation risk'
+  },
+  productKey: {
+    pattern: /\b([A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5})\b/g,
+    severity: 'high' as const,
+    suggestion: '🚨 Product/activation key detected - DO NOT SHARE - Software license violation risk'
+  },
   taxId: {
     pattern: /\b(?:tax\s+id|ein|employer\s+identification|tin)\s*[:=]?\s*\d{2}-?\d{7}\b/gi,
     severity: 'high' as const,
@@ -140,7 +150,7 @@ const DETECTION_PATTERNS = {
     suggestion: '🚨 Bank account number detected - DO NOT SHARE - Financial fraud risk (India)'
   },
   indianPhone: {
-    pattern: /\b(?:\+91|91|0)?[6-9]\d{9}\b/g,
+    pattern: /\b(?:\+91[-.\s]?|91[-.\s]?|0)?[6-9]\d{9}\b/g,
     severity: 'medium' as const,
     suggestion: '⚠️ Indian phone number detected - Consider removing for privacy'
   }
@@ -440,14 +450,29 @@ function isValidMatch(type: string, value: string, fullText: string, position: n
     case 'indianPhone':
       // Indian phone must start with 6-9 and be 10 digits (excluding country code)
       const phoneDigits = value.replace(/\D/g, '')
-      // Remove country code if present
-      const cleanPhone = phoneDigits.replace(/^(91|0)/, '')
+      // Remove country code if present (+91, 91, or leading 0)
+      let cleanPhone = phoneDigits
+      if (phoneDigits.startsWith('91') && phoneDigits.length > 10) {
+        cleanPhone = phoneDigits.substring(2) // Remove 91 country code
+      } else if (phoneDigits.startsWith('0') && phoneDigits.length > 10) {
+        cleanPhone = phoneDigits.substring(1) // Remove leading 0
+      }
+      
+      // Must be exactly 10 digits and start with 6-9
       if (cleanPhone.length === 10 && /^[6-9]/.test(cleanPhone)) {
-        // Check context - if near "phone", "mobile", "contact", it's likely a phone number
-        const phoneContext = fullText.substring(Math.max(0, position - 30), position + 30).toLowerCase()
-        return /phone|mobile|contact|number|call|whatsapp/.test(phoneContext)
+        // Check context - if near "phone", "mobile", "contact", "ph", "no", it's likely a phone number
+        const phoneContext = fullText.substring(Math.max(0, position - 50), position + 50).toLowerCase()
+        return /phone|mobile|contact|number|call|whatsapp|ph\s*no|ph\s*number|telephone|tel/.test(phoneContext)
       }
       return false
+    case 'windowsKey':
+      // Windows key must be in context mentioning windows/activation/product/license
+      const windowsContext = fullText.substring(Math.max(0, position - 100), position + 100).toLowerCase()
+      return /windows|activation|product\s*key|license\s*key|serial\s*key|activation\s*key/.test(windowsContext)
+    case 'productKey':
+      // Product key must be in context mentioning key/activation/license/product
+      const productContext = fullText.substring(Math.max(0, position - 100), position + 100).toLowerCase()
+      return /key|activation|license|product|serial|windows|office|software/.test(productContext)
     default:
       return true
   }
