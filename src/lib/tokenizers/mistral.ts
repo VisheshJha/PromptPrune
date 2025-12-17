@@ -18,14 +18,24 @@ export async function countMistralTokens(
 ): Promise<number> {
   try {
     // Use dynamic import to handle potential bundling issues
-    const tiktoken = await import("js-tiktoken")
+    const tiktoken = await import("js-tiktoken").catch(() => {
+      throw new Error("js-tiktoken not available")
+    })
+    
+    if (!tiktoken || typeof tiktoken.get_encoding !== 'function') {
+      throw new Error("tiktoken methods not available")
+    }
     
     // Mistral uses similar tokenization, approximate with cl100k_base
     const encoding = tiktoken.get_encoding("cl100k_base")
+    if (!encoding || typeof encoding.encode !== 'function') {
+      throw new Error("Encoding not valid")
+    }
+    
     const tokens = encoding.encode(text)
     return tokens.length
   } catch (error) {
-    console.error("Error counting Mistral tokens:", error)
+    // Fallback to character-based estimation (silent)
     return Math.ceil(text.length / 4)
   }
 }

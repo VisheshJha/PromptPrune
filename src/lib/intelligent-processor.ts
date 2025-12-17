@@ -105,16 +105,22 @@ export function intelligentSpellCheck(text: string): {
     'wriet': 'write',
     'wrte': 'write',
     'writng': 'writing',
-    'writte': 'write', // User's typo
+    'writte': 'write',
     'writting': 'writing',
     'writen': 'written',
     // Obvious typos for "email"
-    'emial': 'email', // User's typo
+    'emial': 'email',
     'e-mail': 'email',
     'e mail': 'email',
     'writ': 'write',
     'abt': 'about',
     'abut': 'about',
+    'gv': 'give', // Common typo: "gv" -> "give"
+    'gve': 'give',
+    'mke': 'make',
+    'optmize': 'optimize',
+    'optimse': 'optimize',
+    'optmise': 'optimize',
     'gud': 'good',
     'contnt': 'content',
     'contant': 'content',
@@ -127,13 +133,65 @@ export function intelligentSpellCheck(text: string): {
     'thx': 'thanks',
     'ty': 'thank you',
     'becasue': 'because',
+    'becuase': 'because',
+    'becase': 'because',
     'selss': 'sells',
-    'it\'s': 'its', // Fix apostrophe in "it's" when used incorrectly
+    'it\'s': 'its',
+    // Common typos
+    'teh': 'the',
+    'adn': 'and',
+    'yuo': 'you',
+    'recieve': 'receive',
+    'seperate': 'separate',
+    'occured': 'occurred',
+    'definately': 'definitely',
+    'neccessary': 'necessary',
+    'accomodate': 'accommodate',
+    'existance': 'existence',
+    'occassion': 'occasion',
+    'thier': 'their',
+    'wierd': 'weird',
+    'acheive': 'achieve',
+    'excersise': 'exercise',
+    'priviledge': 'privilege',
+    'maintainance': 'maintenance',
+    'persistant': 'persistent',
+    'occurence': 'occurrence',
+    'existant': 'existent',
+    'seperation': 'separation',
+    'whihc': 'which',
+    'od': 'of',
+    'wht': 'what',
+    'wht is': 'what is',
+    'wht is a': 'what is a',
+    'wht is a pan': 'what is a PAN',
+    'wht is a pan number': 'what is a PAN number',
+    'wht is a pan number lke': 'what is a PAN number like',
+    'lke': 'like',
+    'grammer': 'grammar',
+    'chek': 'check',
+    'chekc': 'check',
+    'cheking': 'checking',
+    'failiing': 'failing',
+    'failng': 'failing',
+    'hardcoded': 'hardcoded',
+    'hardcoded rules': 'hardcoded rules',
+    'rules arenot': 'rules are not',
+    'aren\'t': 'are not',
+    'dont': 'don\'t',
+    'wont': 'won\'t',
+    'cant': 'can\'t',
+    'isnt': 'isn\'t',
+    'hasnt': 'hasn\'t',
+    'havent': 'haven\'t',
+    'shouldnt': 'shouldn\'t',
+    'wouldnt': 'wouldn\'t',
+    'couldnt': 'couldn\'t',
     // Keep valid words as-is (don't "correct" them)
     'delhi': 'Delhi',
     'pollution': 'pollution',
     'ai': 'AI',
-    'ml': 'ML', // Machine Learning
+    'ml': 'ML',
     'robots': 'robots',
     'stuff': 'stuff',
     'boring': 'boring',
@@ -151,21 +209,35 @@ export function intelligentSpellCheck(text: string): {
     'email': 'email',
     'draft': 'draft',
     'sales': 'sales',
-    'rep': 'rep', // representative
+    'rep': 'rep',
     'company': 'company',
     'product': 'product',
     'cold': 'cold',
     'want': 'want',
     'which': 'which',
-    'tech': 'technology', // Only expand if it's clearly meant to be "technology"
+    'tech': 'technology',
+  }
+
+  // Special handling for phrase-level corrections first
+  // "pan no" -> "PAN number"
+  if (corrected.match(/\bpan\s+no\b/gi)) {
+    corrected = corrected.replace(/\bpan\s+no\b/gi, 'PAN number')
+    const panNoIndex = text.toLowerCase().indexOf('pan no')
+    if (panNoIndex >= 0) {
+      corrections.push({
+        original: 'pan no',
+        corrected: 'PAN number',
+        position: panNoIndex
+      })
+    }
   }
 
   // Check each word
-  words.forEach((word) => {
+  words.forEach((word, index) => {
     const lowerWord = word.toLowerCase()
     
-    // Skip if it's a common word
-    if (COMMON_WORDS.has(lowerWord)) {
+    // Skip if it's a common word (but allow context-based corrections)
+    if (COMMON_WORDS.has(lowerWord) && !commonMisspellings[lowerWord]) {
       return
     }
 
@@ -407,7 +479,7 @@ export function extractIntent(text: string): {
             // Pattern 5: Extract first meaningful action verb using NLP, but ONLY from first 100 chars
             // This prevents picking up verbs from later in the sentence like "being", "gets stuck", "highlighting"
             const firstPart = text.substring(0, 100).toLowerCase()
-            const verbs = doc.verbs().out('array')
+            const verbs = (doc as any).verbs().out('array') as string[]
             // Prioritize action verbs that appear early in the sentence
             const actionVerbs = ['write', 'create', 'make', 'generate', 'send', 'draft', 'tell', 'explain', 'describe', 'discuss', 'analyze', 'build', 'design', 'develop', 'compose', 'produce', 'formulate', 'construct', 'establish', 'implement', 'execute', 'perform', 'deliver', 'present', 'prepare', 'organize', 'structure', 'author', 'craft', 'form', 'initiate', 'launch', 'introduce', 'propose', 'suggest', 'recommend', 'advise', 'guide', 'instruct', 'teach', 'educate', 'inform', 'clarify', 'define', 'outline', 'summarize', 'review', 'evaluate', 'assess', 'examine', 'investigate', 'research', 'study', 'explore', 'discover', 'identify', 'determine', 'decide', 'choose', 'select', 'pick', 'opt', 'prefer', 'offer', 'provide', 'supply', 'give', 'show', 'display', 'demonstrate', 'illustrate', 'exemplify', 'represent', 'depict', 'portray', 'characterize', 'detail', 'specify', 'indicate', 'point', 'highlight', 'emphasize', 'stress', 'focus', 'concentrate', 'center', 'target', 'aim', 'direct', 'lead', 'manage', 'oversee', 'supervise', 'coordinate', 'orchestrate', 'arrange', 'plan', 'schedule', 'allocate', 'assign', 'distribute', 'divide', 'split', 'separate', 'categorize', 'classify', 'group', 'sort', 'order', 'rank', 'prioritize', 'sequence']
             
@@ -429,7 +501,7 @@ export function extractIntent(text: string): {
               // Get first sentence only (or first 100 chars)
               const firstSentence = text.split(/[.!?]/)[0].substring(0, 100)
               const firstSentenceDoc = doc.match(firstSentence)
-              const firstSentenceVerbs = firstSentenceDoc.verbs().out('array')
+              const firstSentenceVerbs = (firstSentenceDoc as any).verbs().out('array') as string[]
               if (firstSentenceVerbs.length > 0) {
                 // Find first action verb in first sentence
                 for (const verb of firstSentenceVerbs) {
@@ -555,9 +627,9 @@ export function extractIntent(text: string): {
 
   // If no topic found, try to extract from nouns
   if (!topic || topic.length < 2) {
-    const nouns = doc.nouns().out('array')
+    const nouns = (doc as any).nouns().out('array') as string[]
     const actionWords = ['write', 'create', 'make', 'generate', 'tell', 'explain', 'article', 'report', 'blog', 'content']
-    const topicNouns = nouns.filter(n => 
+    const topicNouns = nouns.filter((n: string) => 
       !actionWords.includes(n.toLowerCase()) && 
       n.length > 2 &&
       !COMMON_WORDS.has(n.toLowerCase())

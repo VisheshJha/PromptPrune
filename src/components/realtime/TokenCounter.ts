@@ -5,6 +5,7 @@
 
 import { getAllTokenCounts } from '../../lib/tokenizers'
 import { getModelPricing, calculateCost, getAveragePricing } from '../../lib/pricing'
+import { debounce } from '../../lib/debounce'
 
 export interface TokenCounterOptions {
   textarea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement
@@ -125,24 +126,17 @@ export class TokenCounter {
   }
 
   private attachListeners(): void {
-    // Listen to input events
-    this.textarea.addEventListener('input', () => {
-      this.debouncedUpdate()
-    })
+    // Listen to input events with debouncing
+    this.textarea.addEventListener('input', this.debouncedUpdate)
 
     // Update position on scroll/resize
     window.addEventListener('scroll', () => this.updatePosition(), true)
     window.addEventListener('resize', () => this.updatePosition())
   }
 
-  private debouncedUpdate(): void {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer)
-    }
-    this.debounceTimer = window.setTimeout(() => {
-      this.update()
-    }, 300) // 300ms debounce
-  }
+  private debouncedUpdate = debounce(() => {
+    this.update()
+  }, 300) // 300ms debounce for token counting
 
   private async update(): Promise<void> {
     if (!this.shadowRoot) return

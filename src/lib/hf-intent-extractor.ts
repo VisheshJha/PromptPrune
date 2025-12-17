@@ -4,7 +4,10 @@
  * Optimized for browser extension (lightweight models, lazy loading)
  */
 
-import { pipeline, Pipeline } from '@xenova/transformers'
+// MUST import transformers config FIRST before importing transformers
+import './transformers-config'
+
+import { pipeline, Pipeline, env } from '@xenova/transformers'
 
 export interface EnhancedIntent {
   action: string
@@ -48,34 +51,81 @@ class HFIntentExtractor {
 
     this.initPromise = (async () => {
       try {
+        console.log('[HFIntentExtractor] 🚀 Starting model initialization...')
+        console.log('[HFIntentExtractor] Loading models: Xenova/mobilebert-uncased-mnli, Xenova/all-MiniLM-L6-v2')
+        console.log('[HFIntentExtractor] Make sure https://huggingface.co/* is in manifest host_permissions!')
+        
         // Use lightweight models optimized for browser
         // Zero-shot classification for intent
-        this.classifier = await Promise.race([
-          pipeline(
-            'zero-shot-classification',
-            'Xenova/mobilebert-uncased-mnli', // ~25MB, fast inference
-            { quantized: true } // Use quantized model for smaller size
-          ),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Model load timeout")), 15000))
-        ]) as Pipeline
+        let classifierError: any = null
+        try {
+          this.classifier = await Promise.race([
+            pipeline(
+              'zero-shot-classification',
+              'Xenova/mobilebert-uncased-mnli', // ~25MB, fast inference
+              { quantized: true } // Use quantized model for smaller size
+            ),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Model load timeout after 15s")), 15000))
+          ]) as Pipeline
+          console.log('[HFIntentExtractor] ✅ Classifier model loaded successfully')
+        } catch (error: any) {
+          classifierError = error
+          console.error('[HFIntentExtractor] ❌ Classifier model failed to load:', error.message)
+          if (error.message?.includes('<!DOCTYPE') || error.message?.includes('Unexpected token')) {
+            console.error('[HFIntentExtractor] This error usually means:')
+            console.error('  1. ⚠️  MANIFEST PERMISSION MISSING: https://huggingface.co/* must be in host_permissions!')
+            console.error('  2. Model does not exist on HuggingFace')
+            console.error('  3. Network/CORS issue - check browser console for CORS errors')
+            console.error('[HFIntentExtractor] 🔧 FIX: Add "https://huggingface.co/*" to manifest host_permissions and reload extension')
+          }
+          throw error // Re-throw to prevent continuing
+        }
 
         // Text embeddings for semantic similarity
-        this.embedder = await Promise.race([
-          pipeline(
-            'feature-extraction',
-            'Xenova/all-MiniLM-L6-v2', // ~23MB, optimized for speed
-            { quantized: true }
-          ),
-          new Promise((_, reject) => setTimeout(() => reject(new Error("Model load timeout")), 15000))
-        ]) as Pipeline
+        let embedderError: any = null
+        try {
+          this.embedder = await Promise.race([
+            pipeline(
+              'feature-extraction',
+              'Xenova/all-MiniLM-L6-v2', // ~23MB, optimized for speed
+              { quantized: true }
+            ),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("Model load timeout after 15s")), 15000))
+          ]) as Pipeline
+          console.log('[HFIntentExtractor] ✅ Embedder model loaded successfully')
+        } catch (error: any) {
+          embedderError = error
+          console.error('[HFIntentExtractor] ❌ Embedder model failed to load:', error.message)
+          if (error.message?.includes('<!DOCTYPE') || error.message?.includes('Unexpected token')) {
+            console.error('[HFIntentExtractor] This error usually means:')
+            console.error('  1. ⚠️  MANIFEST PERMISSION MISSING: https://huggingface.co/* must be in host_permissions!')
+            console.error('  2. Model does not exist on HuggingFace')
+            console.error('  3. Network/CORS issue - check browser console for CORS errors')
+            console.error('[HFIntentExtractor] 🔧 FIX: Add "https://huggingface.co/*" to manifest host_permissions and reload extension')
+          }
+          // Clean up classifier if embedder fails
+          this.classifier = null
+          throw error // Re-throw to prevent continuing
+        }
 
         // NER for entity extraction (optional, can be lazy loaded)
         // We'll load this only when needed to save initial load time
 
         this.initialized = true
-        console.log('[HFIntentExtractor] Models initialized')
+        console.log('[HFIntentExtractor] ✅ All models initialized successfully')
       } catch (error) {
-        console.error('[HFIntentExtractor] Initialization error:', error)
+        console.error('[HFIntentExtractor] ❌ Model initialization failed!')
+        console.error('[HFIntentExtractor] Error details:', error)
+        if (error instanceof Error) {
+          console.error('[HFIntentExtractor] Error message:', error.message)
+          console.error('[HFIntentExtractor] Error stack:', error.stack)
+        }
+        console.error('[HFIntentExtractor] Possible causes:')
+        console.error('  1. ⚠️  MANIFEST PERMISSION MISSING: https://huggingface.co/* must be in host_permissions!')
+        console.error('  2. Models do not exist on HuggingFace')
+        console.error('  3. Network/CORS issue - check browser console for CORS errors')
+        console.error('  4. Browser compatibility issue')
+        console.error('[HFIntentExtractor] Extension will use fallback methods (keyword-based)')
         // Fallback: continue without HF models
         this.initialized = false
         this.classifier = null

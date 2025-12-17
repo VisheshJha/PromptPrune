@@ -18,15 +18,25 @@ export async function countLlamaTokens(
 ): Promise<number> {
   try {
     // Use dynamic import to handle potential bundling issues
-    const tiktoken = await import("js-tiktoken")
+    const tiktoken = await import("js-tiktoken").catch(() => {
+      throw new Error("js-tiktoken not available")
+    })
+    
+    if (!tiktoken || typeof tiktoken.get_encoding !== 'function') {
+      throw new Error("tiktoken methods not available")
+    }
     
     // Llama uses SentencePiece, approximate with cl100k_base (close enough)
     const encoding = tiktoken.get_encoding("cl100k_base")
+    if (!encoding || typeof encoding.encode !== 'function') {
+      throw new Error("Encoding not valid")
+    }
+    
     const tokens = encoding.encode(text)
     // Llama tokenization is slightly different, adjust by ~5%
     return Math.round(tokens.length * 1.05)
   } catch (error) {
-    console.error("Error counting Llama tokens:", error)
+    // Fallback to character-based estimation (silent)
     return Math.ceil(text.length / 4)
   }
 }

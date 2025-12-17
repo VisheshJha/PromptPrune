@@ -4,6 +4,7 @@
  */
 
 import { intelligentSpellCheck } from '../../lib/intelligent-processor'
+import { debounce } from '../../lib/debounce'
 
 export interface SpellCheckOptions {
   textarea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement
@@ -102,9 +103,7 @@ export class SpellCheckOverlay {
   }
 
   private attachListeners(): void {
-    this.textarea.addEventListener('input', () => {
-      this.debouncedUpdate()
-    })
+    this.textarea.addEventListener('input', this.debouncedUpdate)
 
     this.textarea.addEventListener('scroll', () => {
       this.updateSquiggles()
@@ -116,14 +115,9 @@ export class SpellCheckOverlay {
     })
   }
 
-  private debouncedUpdate(): void {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer)
-    }
-    this.debounceTimer = window.setTimeout(() => {
-      this.update()
-    }, 300)
-  }
+  private debouncedUpdate = debounce(() => {
+    this.update()
+  }, 500) // 500ms debounce for spell check
 
   private update(): void {
     if (!this.overlay) return

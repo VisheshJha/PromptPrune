@@ -53,7 +53,8 @@ export class RealTimeAssistant {
       autocomplete: options.enabled?.autocomplete ?? true,
       redundancy: options.enabled?.redundancy ?? true,
       smartSuggestions: options.enabled?.smartSuggestions ?? true,
-      grammar: options.enabled?.grammar ?? true,
+      // Grammar feature removed from user-facing UI/UX (keep internal capability off by default)
+      grammar: options.enabled?.grammar ?? false,
     }
 
     this.init()

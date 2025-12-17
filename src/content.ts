@@ -9,17 +9,25 @@ import { applyFramework, rankFrameworks, FRAMEWORKS, type FrameworkType } from "
 import { getAllTokenCounts } from "~/lib/tokenizers"
 import { isFollowUpMessage } from "~/lib/prompt-guide"
 import { generateFirstPromptTemplate, generateFollowUpTemplate, shouldPreFillTemplate } from "~/lib/prompt-template"
-import { createFieldButton, positionFieldButton } from "~/content/field-button"
-import { makeButtonsDraggable } from "~/content/draggable-buttons"
 import { testComplexPrompt, quickTestShorten, quickTestFrameworkSwitching } from "~/lib/prompt-test-runner"
+
+declare global {
+  interface Window {
+    hasCapsuleListeners?: boolean;
+  }
+}
+
 import { testSmartOptimizer } from "~/lib/test-smart-optimizer"
 import { runAllTests, quickTest, PROMPT_TEST_CASES } from "~/lib/prompt-type-tester"
 import { optimizePromptSmartly } from "~/lib/smart-prompt-optimizer"
-import { getModelManager } from "~/lib/model-manager"
+import { getUnifiedModelManager } from "~/lib/unified-model-manager"
 import { showModelDownloadPrompt, downloadModelsWithProgress, showDownloadProgress } from "~/content/model-download-ui"
-import { createSmartAnalyzeButton } from "~/content/smart-analyze-button"
-import { detectSensitiveContent } from "~/lib/sensitive-content-detector"
+import { getCapsuleUI } from "~/content/capsule-ui"
+
+import { detectSensitiveContentML, detectSensitiveContentSync } from "~/lib/ml-sensitive-detector"
 import { RealTimeAssistant } from "~/components/realtime"
+import { getPreviewModal } from "~/content/preview-modal"
+
 
 export const config: PlasmoCSConfig = {
   matches: [
@@ -40,6 +48,10 @@ export const config: PlasmoCSConfig = {
     "https://deepseek.com/*",
     "https://www.midjourney.com/*",
     "https://midjourney.com/*",
+    "https://huggingface.co/*",
+    "https://*.huggingface.co/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
   run_at: "document_start", // Run earlier to catch submissions before they happen
 }
@@ -47,9 +59,8 @@ export const config: PlasmoCSConfig = {
 // PromptPrune content script loaded
 
 // Track icons and dropdowns per textarea
-const textAreaIcons = new WeakMap<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | HTMLInputElement, HTMLElement>()
-const textAreaDropdowns = new WeakMap<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | HTMLInputElement, HTMLElement>()
-const textAreaSmartButtons = new WeakMap<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | HTMLInputElement, HTMLElement>()
+
+const textAreaCapsules = new WeakMap<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | HTMLInputElement, any>()
 // Basic mode removed - only smart mode now
 
 // Track real-time assistant per textarea
@@ -76,7 +87,7 @@ const getBypassFlagForTextarea = (textArea: HTMLTextAreaElement | HTMLDivElement
 // Field buttons removed - only smart mode now
 
 // Only smart mode now - basic mode removed
-;(window as any).__promptprune_analysis_mode = 'smart'
+  ; (window as any).__promptprune_analysis_mode = 'smart'
 const textAreaFieldButtons = new WeakMap<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | HTMLInputElement, HTMLElement>()
 let frameworkUI: HTMLElement | null = null
 
@@ -89,7 +100,7 @@ function addIfValid(
   if (seen.has(el)) return false
   
   // Skip if already has an icon attached
-  if (textAreaIcons.has(el as HTMLTextAreaElement | HTMLDivElement | HTMLInputElement)) {
+  if (textAreaCapsules.has(el as HTMLTextAreaElement | HTMLDivElement | HTMLInputElement)) {
     return false
   }
   
@@ -328,292 +339,6 @@ function setText(element: HTMLTextAreaElement | HTMLDivElement | HTMLInputElemen
   }
 }
 
-// Create Clear All button
-function createClearButton(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement, iconButton: HTMLElement): HTMLElement {
-  const rect = textArea.getBoundingClientRect()
-  const textAreaId = textArea.id || textArea.getAttribute('data-id') || textArea.getAttribute('name') || ''
-  const stableId = textAreaId || `textarea-${Math.round(rect.top)}-${Math.round(rect.left)}`
-  const clearButtonId = `promptprune-clear-btn-${stableId}`
-  
-  const existing = document.querySelector(`#${clearButtonId}`)
-  if (existing) {
-    return existing as HTMLElement
-  }
-  
-  const shadowHost = document.createElement("div")
-  shadowHost.id = clearButtonId
-  shadowHost.style.cssText = `
-    position: fixed;
-    z-index: 10000;
-    pointer-events: none;
-    display: none;
-  `
-  
-  const shadowRoot = shadowHost.attachShadow({ mode: "open" })
-  
-  const style = document.createElement("style")
-  style.textContent = `
-    .clear-btn {
-      padding: 4px 8px;
-      border-radius: 4px;
-      background: #ef4444;
-      color: white;
-      border: none;
-      cursor: pointer;
-      font-weight: 600;
-      font-size: 11px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      box-shadow: 0 2px 4px rgba(239, 68, 68, 0.3);
-      transition: all 0.2s;
-      pointer-events: auto;
-      white-space: nowrap;
-    }
-    .clear-btn:hover {
-      background: #dc2626;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 8px rgba(239, 68, 68, 0.4);
-    }
-    .clear-btn:active {
-      transform: translateY(0);
-    }
-  `
-  
-  const button = document.createElement("button")
-  button.className = "clear-btn"
-  button.textContent = "Clear"
-  button.setAttribute("aria-label", "Clear all text")
-  button.title = "Clear all text"
-  
-  button.addEventListener("click", (e) => {
-    e.stopPropagation()
-    e.preventDefault()
-    // Mark as cleared by user to prevent template refill
-    textArea.setAttribute("data-cleared-by-user", "true")
-    // Clear text
-    if (textArea instanceof HTMLTextAreaElement || textArea instanceof HTMLInputElement) {
-      textArea.value = ""
-      // Don't dispatch input event to prevent template refill
-      textArea.dispatchEvent(new Event("change", { bubbles: true }))
-    } else {
-      textArea.innerText = ""
-      textArea.textContent = ""
-      // Don't dispatch input event to prevent template refill
-    }
-    showNotification("Prompt cleared", "success")
-    textArea.focus()
-  })
-  
-  shadowRoot.appendChild(style)
-  shadowRoot.appendChild(button)
-  
-  return shadowHost
-}
-
-// Create icon button using Shadow DOM
-function createIconButton(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement): HTMLElement {
-  // Create shadow host with stable ID per textarea
-  // Use textarea's position and attributes to create a stable identifier
-  const rect = textArea.getBoundingClientRect()
-  const textAreaId = textArea.id || textArea.getAttribute('data-id') || textArea.getAttribute('name') || ''
-  const stableId = textAreaId || `textarea-${Math.round(rect.top)}-${Math.round(rect.left)}`
-  const iconId = `promptprune-icon-${stableId}`
-  
-  // Check if an icon with this ID already exists and remove it
-  const existingIcon = document.querySelector(`#${iconId}`)
-  if (existingIcon) {
-    console.log("[PromptPrune] Removing duplicate icon:", iconId)
-    existingIcon.remove()
-  }
-  
-  const shadowHost = document.createElement("div")
-  shadowHost.id = iconId
-  shadowHost.style.cssText = `
-    position: fixed;
-    z-index: 10000;
-    pointer-events: none;
-    display: none;
-    top: 0;
-    right: 0;
-    left: auto;
-    bottom: auto;
-  `
-
-  // Create shadow root
-  const shadowRoot = shadowHost.attachShadow({ mode: "open" })
-
-  // Add styles
-  const style = document.createElement("style")
-  style.textContent = `
-    .icon-button {
-      width: 28px;
-      height: 28px;
-      border-radius: 6px;
-      background: #10b981;
-      color: white;
-      border: none;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-weight: 700;
-      font-size: 14px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-      transition: all 0.2s;
-      pointer-events: auto;
-    }
-    .icon-button:hover {
-      background: #059669;
-      transform: scale(1.1);
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-    }
-    .icon-button:active {
-      transform: scale(0.95);
-    }
-  `
-
-  // Create button
-  const button = document.createElement("button")
-  button.className = "icon-button"
-  button.textContent = "P"
-  button.setAttribute("aria-label", "PromptPrune - Analyze prompt")
-  button.title = "PromptPrune - Optimize your prompt"
-
-  shadowRoot.appendChild(style)
-  shadowRoot.appendChild(button)
-  
-  // Add tooltip on hover for pre-filled template
-  let tooltip: HTMLElement | null = null
-  button.addEventListener("mouseenter", () => {
-    // Check if template was pre-filled
-    const host = shadowHost
-    if (host.getAttribute("data-template-prefilled") === "true") {
-      tooltip = document.createElement("div")
-      tooltip.id = "promptprune-tooltip"
-      tooltip.textContent = "Template pre-filled for better framework analysis"
-      tooltip.style.cssText = `
-        position: fixed;
-        background: rgba(0, 0, 0, 0.85);
-        color: white;
-        padding: 6px 10px;
-        border-radius: 4px;
-        font-size: 11px;
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-        z-index: 1000002;
-        pointer-events: none;
-        white-space: nowrap;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-      `
-      const rect = button.getBoundingClientRect()
-      tooltip.style.top = `${rect.top - 30}px`
-      tooltip.style.left = `${rect.left}px`
-      document.body.appendChild(tooltip)
-    }
-  })
-  
-  button.addEventListener("mouseleave", () => {
-    if (tooltip) {
-      tooltip.remove()
-      tooltip = null
-    }
-  })
-
-  return shadowHost
-}
-
-// Create dropdown menu using Shadow DOM
-function createDropdownMenu(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement): HTMLElement {
-  const shadowHost = document.createElement("div")
-  shadowHost.id = "promptprune-dropdown-host"
-  shadowHost.style.cssText = `
-    position: fixed;
-    z-index: 10001;
-    pointer-events: none;
-    display: none;
-  `
-
-  const shadowRoot = shadowHost.attachShadow({ mode: "open" })
-
-  const style = document.createElement("style")
-  style.textContent = `
-    .dropdown {
-      background: white;
-      border-radius: 8px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-      min-width: 220px;
-      overflow: hidden;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      pointer-events: auto;
-    }
-    .dropdown-item {
-      padding: 12px 16px;
-      cursor: pointer;
-      border: none;
-      background: white;
-      width: 100%;
-      text-align: left;
-      font-size: 14px;
-      color: #374151;
-      transition: background 0.15s;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .dropdown-item:hover {
-      background: #f3f4f6;
-    }
-    .dropdown-item:first-child {
-      border-top-left-radius: 8px;
-      border-top-right-radius: 8px;
-    }
-    .dropdown-item:last-child {
-      border-bottom-left-radius: 8px;
-      border-bottom-right-radius: 8px;
-    }
-    .dropdown-item-icon {
-      font-size: 16px;
-    }
-    .dropdown-divider {
-      height: 1px;
-      background: #e5e7eb;
-      margin: 4px 0;
-    }
-  `
-
-  const dropdown = document.createElement("div")
-  dropdown.className = "dropdown"
-  dropdown.id = "promptprune-dropdown"
-
-  // Menu items (only smart mode now)
-  const items = [
-    { icon: "✨", text: "Smart Analyze", action: "analyze" },
-    { icon: "✂️", text: "Shorten Prompt", action: "shorten" },
-    { icon: "📋", text: "Choose Framework...", action: "framework" },
-  ]
-
-  items.forEach((item, index) => {
-    const button = document.createElement("button")
-    button.className = "dropdown-item"
-    button.innerHTML = `<span class="dropdown-item-icon">${item.icon}</span><span>${item.text}</span>`
-    button.addEventListener("click", () => {
-      handleMenuAction(item.action, textArea)
-      hideDropdown()
-    })
-    dropdown.appendChild(button)
-
-    if (index < items.length - 1) {
-      const divider = document.createElement("div")
-      divider.className = "dropdown-divider"
-      dropdown.appendChild(divider)
-    }
-  })
-
-  shadowRoot.appendChild(style)
-  shadowRoot.appendChild(dropdown)
-
-  return shadowHost
-}
-
 // Handle menu actions
 function handleMenuAction(action: string, textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement) {
   const text = getText(textArea)
@@ -623,13 +348,7 @@ function handleMenuAction(action: string, textArea: HTMLTextAreaElement | HTMLDi
     return
   }
 
-  // Keep icon visible after action
-  const iconBtn = textAreaIcons.get(textArea)
-  if (iconBtn) {
-    iconBtn.style.display = "block"
-    iconBtn.style.opacity = "1"
-    iconBtn.style.visibility = "visible"
-  }
+
 
   // Only smart mode now
   switch (action) {
@@ -687,38 +406,63 @@ async function analyzeWithSmartOptimizer(textArea: HTMLTextAreaElement | HTMLDiv
   // Use stored original if current is framework output, otherwise use current (complete) text
   const originalPrompt = isFrameworkOutput ? (originalPrompts.get(textArea) || currentText) : currentText
   
-  // Check if models are ready or cached
-  const modelManager = getModelManager()
-  const modelsReady = modelManager.areAnyModelsReady()
-  const modelsCached = await modelManager.areModelsCached()
+  // Check if unified model is ready or cached
+  const unifiedModel = getUnifiedModelManager()
+  const modelReady = unifiedModel.isReady()
+  const modelCached = await unifiedModel.isCached()
   
-  if (!modelsReady && !modelsCached) {
-    // Models not ready and not cached - show download prompt
+  // Check if model download was previously attempted and failed
+  const modelDownloadAttempted = localStorage.getItem('promptprune-model-download-attempted') === 'true'
+  const modelDownloadSucceeded = localStorage.getItem('promptprune-unified-model-downloaded') === 'true'
+
+  // Only show download prompt if:
+  // 1. Model is not ready AND
+  // 2. Model is not cached AND
+  // 3. We haven't already attempted download (or if we did, it succeeded but model still not ready)
+  if (!modelReady && !modelCached && !modelDownloadAttempted) {
+    // Model not ready and not cached - show download prompt (only once)
     const download = await showModelDownloadPrompt()
     if (!download) {
-      // User declined - use fallback
+      // User declined - mark as attempted so we don't ask again
+      localStorage.setItem('promptprune-model-download-attempted', 'true')
       analyzeWithBestFramework(textArea, text)
       return
     }
     
-    // Download models with progress
+    // Download model with progress
     const success = await downloadModelsWithProgress()
+    localStorage.setItem('promptprune-model-download-attempted', 'true')
     if (!success) {
       showNotification("Model download failed, using fallback analysis", "warning")
       analyzeWithBestFramework(textArea, text)
       return
     }
-  } else if (!modelsReady && modelsCached) {
-    // Models are cached but not loaded - load them silently
-    showNotification("Loading AI models...", "info")
+  } else if (!modelReady && modelCached) {
+    // Model is cached but not loaded - try to load it silently (only once per session)
+    if (!modelDownloadAttempted) {
+    showNotification("Loading AI model...", "info")
     try {
-      await downloadModelsWithProgress()
+      await unifiedModel.initialize()
+        // If successful, mark as attempted
+        if (unifiedModel.isReady()) {
+          localStorage.setItem('promptprune-model-download-attempted', 'true')
+        }
     } catch (error) {
-      console.warn("[PromptPrune] Error loading cached models:", error)
-      showNotification("Error loading models, using fallback analysis", "warning")
+      console.warn("[PromptPrune] Error loading cached model:", error)
+        localStorage.setItem('promptprune-model-download-attempted', 'true')
+      showNotification("Error loading model, using fallback analysis", "warning")
       analyzeWithBestFramework(textArea, text)
       return
     }
+    } else {
+      // Already attempted - just use fallback
+      analyzeWithBestFramework(textArea, text)
+      return
+    }
+  } else if (!modelReady && modelDownloadAttempted) {
+    // Model download was attempted but failed - use fallback without prompting
+    analyzeWithBestFramework(textArea, text)
+    return
   }
   
   showNotification("Analyzing with AI...", "info")
@@ -734,12 +478,15 @@ async function analyzeWithSmartOptimizer(textArea: HTMLTextAreaElement | HTMLDiv
     }
     
     // Apply the improved prompt
-    setText(textArea, result.improvedPrompt)
     
+    const previewModal = getPreviewModal()
+    previewModal.show(originalPrompt, result.improvedPrompt, (newText) => {
+      setText(textArea, newText)
     showNotification(
-      `✅ Applied ${FRAMEWORKS[result.framework].name} framework (${Math.round(result.confidence * 100)}% confidence)`,
+      `✅ Applied ${result.template?.name || 'Smart template'} (${Math.round(result.confidence * 100)}% confidence)`,
       "success"
     )
+    })
     
     console.log("[PromptPrune] Smart analysis complete:", {
       framework: result.framework,
@@ -811,8 +558,12 @@ function analyzeWithBestFramework(textArea: HTMLTextAreaElement | HTMLDivElement
       }
       
       console.log("[PromptPrune] Framework applied successfully, output length:", optimized.length)
-      setText(textArea, optimized)
+
+      const previewModal = getPreviewModal()
+      previewModal.show(originalPrompt, optimized, (newText) => {
+        setText(textArea, newText)
       showNotification(`Applied ${FRAMEWORKS[bestFit.framework].name} framework`, "success")
+      })
     } catch (error) {
       console.error("Analysis error:", error)
       const errorMessage = error instanceof Error ? error.message : "Unknown error"
@@ -1187,7 +938,7 @@ function showFrameworkSuggestions(textArea: HTMLTextAreaElement | HTMLDivElement
   if (lastCall && now - lastCall < 1000) {
     return // Debounce: only update once per second
   }
-  ;(window as any)[suggestionKey] = now
+  ; (window as any)[suggestionKey] = now
   
   // Get or create suggestions container
   let suggestionsContainer = textAreaFrameworkSuggestions.get(textArea)
@@ -1196,34 +947,41 @@ function showFrameworkSuggestions(textArea: HTMLTextAreaElement | HTMLDivElement
     suggestionsContainer.id = `promptprune-framework-suggestions-${textArea.id || Math.random()}`
     suggestionsContainer.style.cssText = `
       position: fixed;
-      z-index: 999997;
+        z-index: 9999;
       display: flex;
       gap: 8px;
-      flex-wrap: wrap;
-      max-width: 300px;
-      pointer-events: none;
+        background: white;
+        padding: 4px;
+        border-radius: 999px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        border: 1px solid #e5e7eb;
+        pointer-events: auto;
+        opacity: 0;
+        transform: translateY(10px);
+        transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     `
     document.body.appendChild(suggestionsContainer)
     textAreaFrameworkSuggestions.set(textArea, suggestionsContainer)
   }
   
   // Position below Smart Analysis button
-  const smartButton = textAreaSmartButtons.get(textArea)
-  if (smartButton) {
-    const smartRect = smartButton.getBoundingClientRect()
-    if (smartRect.width > 0 && smartRect.height > 0) {
-      suggestionsContainer.style.left = `${smartRect.left}px` // Same left as Smart button
-      suggestionsContainer.style.top = `${smartRect.bottom + 8}px` // Below Smart button with 8px gap
-    }
-  } else {
-    // Fallback: position below P icon
-    const iconBtn = textAreaIcons.get(textArea)
-    if (iconBtn) {
-      const iconRect = iconBtn.getBoundingClientRect()
-      suggestionsContainer.style.left = `${iconRect.left}px`
-      suggestionsContainer.style.top = `${iconRect.bottom + 40}px` // Below icon (accounting for Smart button)
-    }
-  }
+  // Position below P icon
+  // The capsule UI is now responsible for positioning itself relative to the textarea.
+  // Framework suggestions will be positioned relative to the capsule.
+  // For now, we'll just position it generally below the textarea.
+  // Position below the capsule using fixed positioning
+  // This ensures it never gets cut off or blocks the input in a weird way
+  const textAreaRect = textArea.getBoundingClientRect()
+
+  // Calculate fixed position
+  const left = textAreaRect.left
+  const top = textAreaRect.bottom + 50 // clearly below
+
+  suggestionsContainer.style.left = `${left}px`
+  suggestionsContainer.style.top = `${top}px`
+
+
+
   
   // Get top 2-3 framework suggestions
   rankFrameworks(text).then(rankings => {
@@ -1234,12 +992,12 @@ function showFrameworkSuggestions(textArea: HTMLTextAreaElement | HTMLDivElement
       const framework = FRAMEWORKS[rank.framework]
       const chip = document.createElement("button")
       chip.style.cssText = `
-        padding: 6px 12px;
-        border-radius: 16px;
+        padding: 4px 10px;
+        border-radius: 999px;
         background: ${index === 0 ? '#10b981' : '#f3f4f6'};
-        color: ${index === 0 ? 'white' : '#374151'};
-        border: none;
-        font-size: 12px;
+        color: ${index === 0 ? 'white' : '#4b5563'};
+        border: 1px solid ${index === 0 ? '#059669' : '#e5e7eb'};
+        font-size: 11px;
         font-weight: 500;
         cursor: pointer;
         pointer-events: auto;
@@ -1248,31 +1006,52 @@ function showFrameworkSuggestions(textArea: HTMLTextAreaElement | HTMLDivElement
         gap: 6px;
         transition: all 0.2s;
         white-space: nowrap;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
       `
-      chip.innerHTML = `
-        <span>${framework.icon}</span>
-        <span>${framework.name}</span>
-        ${index === 0 ? '<span style="font-size: 10px; opacity: 0.9;">BEST</span>' : ''}
-      `
+
+      let innerHTML = `<span>${framework.icon} ${framework.name}</span>`
+
+      if (index === 0) {
+        innerHTML += `
+          <span style="
+            background: rgba(255,255,255,0.2); 
+            padding: 1px 5px; 
+            border-radius: 4px; 
+            font-size: 9px; 
+            font-weight: 700;
+            letter-spacing: 0.5px;
+          ">BEST</span>
+        `
+      }
+
+      chip.innerHTML = innerHTML
+
+      // Tooltip for description
+      chip.title = `${framework.description}`
       
       chip.addEventListener("click", async (e) => {
         e.stopPropagation()
         const originalPrompt = originalPrompts.get(textArea) || text
         const frameworkOutput = await applyFramework(originalPrompt, rank.framework)
-        setText(textArea, frameworkOutput.optimized)
+
+        const previewModal = getPreviewModal()
+        previewModal.show(originalPrompt, frameworkOutput.optimized, (newText) => {
+          setText(textArea, newText)
         showNotification(`Applied ${framework.name}`, "success")
         hideFrameworkSuggestions(textArea)
+        })
       })
       
       chip.addEventListener("mouseenter", () => {
-        chip.style.transform = "translateY(-2px)"
-        chip.style.boxShadow = "0 4px 8px rgba(0,0,0,0.15)"
+        chip.style.transform = "translateY(-1px)"
+        chip.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)"
+        if (index !== 0) chip.style.background = "#e5e7eb"
       })
       
       chip.addEventListener("mouseleave", () => {
         chip.style.transform = "translateY(0)"
-        chip.style.boxShadow = "0 2px 4px rgba(0,0,0,0.1)"
+        chip.style.boxShadow = "0 1px 2px rgba(0,0,0,0.05)"
+        if (index !== 0) chip.style.background = "#f3f4f6"
       })
       
       suggestionsContainer.appendChild(chip)
@@ -1444,15 +1223,7 @@ function createFrameworkUI(textArea: HTMLTextAreaElement | HTMLDivElement | HTML
   header.querySelector("#promptprune-close")?.addEventListener("click", () => {
     container.style.display = "none"
     // Keep icon visible when closing framework UI
-    const textAreas = findTextAreas()
-    textAreas.forEach(ta => {
-      const iconBtn = textAreaIcons.get(ta)
-      if (iconBtn) {
-        iconBtn.style.display = "block"
-        iconBtn.style.opacity = "1"
-        iconBtn.style.visibility = "visible"
-      }
-    })
+    // No longer managing icon visibility here as it's handled by Capsule UI
   })
 
   return container
@@ -1609,7 +1380,7 @@ function findSubmitButton(textArea: HTMLElement): HTMLElement | null {
 function showSensitiveContentWarning(
   textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement,
   text: string,
-  sensitiveCheck: ReturnType<typeof detectSensitiveContent>
+  sensitiveCheck: Awaited<ReturnType<typeof detectSensitiveContentML>>
 ) {
   console.log("[PromptPrune] ===== SHOWING SENSITIVE CONTENT WARNING =====")
   console.log("[PromptPrune] showSensitiveContentWarning called with:", {
@@ -1762,7 +1533,21 @@ function showSensitiveContentWarning(
         font-size: 13px;
         border: 1px solid ${item.severity === 'high' ? '#fee2e2' : item.severity === 'medium' ? '#fef3c7' : '#dbeafe'};
       `
-      const typeName = item.type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+      // Clean up type name for display - remove "Standalone" suffix and format nicely
+      let typeName = item.type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+      typeName = typeName.replace(/Standalone/gi, '').trim()
+      // Handle special cases
+      if (typeName.toLowerCase().includes('aadhaar')) typeName = 'Aadhaar Number'
+      if (typeName.toLowerCase().includes('pan')) typeName = 'PAN Card'
+      if (typeName.toLowerCase().includes('upi')) typeName = 'UPI ID'
+      if (typeName.toLowerCase().includes('ifsc')) typeName = 'IFSC Code'
+      if (typeName.toLowerCase().includes('gstin')) typeName = 'GSTIN'
+      if (typeName.toLowerCase().includes('voter id')) typeName = 'Voter ID'
+      if (typeName.toLowerCase().includes('driver license')) typeName = 'Driver License'
+      if (typeName.toLowerCase().includes('credit card')) typeName = 'Credit Card'
+      if (typeName.toLowerCase().includes('bank account')) typeName = 'Bank Account'
+      if (typeName.toLowerCase().includes('api key')) typeName = 'API Key'
+      if (typeName.toLowerCase().includes('phone')) typeName = 'Phone Number'
       itemDiv.innerHTML = `
         <div style="font-weight: 600; color: #111827; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
           <span style="width: 8px; height: 8px; border-radius: 50%; background: ${item.severity === 'high' ? '#dc2626' : item.severity === 'medium' ? '#f59e0b' : '#3b82f6'};"></span>
@@ -1818,8 +1603,45 @@ function showSensitiveContentWarning(
     cancelBtn.style.borderColor = "#e5e7eb"
   }
   cancelBtn.onclick = () => {
+    document.removeEventListener('keydown', modalKeyHandler, { capture: true })
     overlay.remove()
     textArea.focus()
+  }
+
+  const maskBtn = document.createElement("button")
+  maskBtn.textContent = "Mask Sensitive Data"
+  maskBtn.style.cssText = `
+    flex: 1;
+    padding: 12px 24px;
+    background: #4f46e5;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+    box-shadow: 0 2px 4px rgba(79, 70, 229, 0.2);
+  `
+  maskBtn.onmouseover = () => {
+    maskBtn.style.background = "#4338ca"
+    maskBtn.style.transform = "translateY(-1px)"
+  }
+  maskBtn.onmouseout = () => {
+    maskBtn.style.background = "#4f46e5"
+    maskBtn.style.transform = "translateY(0)"
+  }
+  maskBtn.onclick = async () => {
+    document.removeEventListener('keydown', modalKeyHandler, { capture: true })
+    overlay.remove()
+    // Call mask logic - properly handle async
+    try {
+      await maskSensitiveData(textArea)
+    } catch (error) {
+      console.error("[PromptPrune] Masking failed:", error)
+      showNotification("Masking failed. Please try again.", "error")
+    }
   }
   
   const proceedBtn = document.createElement("button")
@@ -1851,6 +1673,9 @@ function showSensitiveContentWarning(
   proceedBtn.onclick = (e) => {
     e.stopPropagation()
     e.stopImmediatePropagation()
+
+    // Remove modal key handler first
+    document.removeEventListener('keydown', modalKeyHandler, { capture: true })
     
     // Set bypass flag to allow submission for this textarea
     const bypassFlag = getBypassFlagForTextarea(textArea)
@@ -1930,6 +1755,7 @@ function showSensitiveContentWarning(
   }
   
   buttons.appendChild(cancelBtn)
+  buttons.appendChild(maskBtn)
   buttons.appendChild(proceedBtn)
   
   // Assemble modal
@@ -1966,20 +1792,32 @@ function showSensitiveContentWarning(
   // Close on overlay click
   overlay.onclick = (e) => {
     if (e.target === overlay) {
+      document.removeEventListener('keydown', modalKeyHandler, { capture: true })
       overlay.remove()
       textArea.focus()
     }
   }
   
-  // Close on Escape key
-  const escapeHandler = (e: KeyboardEvent) => {
+  // Close on Escape key and prevent Enter key from submitting while modal is open
+  const modalKeyHandler = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
+      document.removeEventListener('keydown', modalKeyHandler, { capture: true })
       overlay.remove()
       textArea.focus()
-      document.removeEventListener('keydown', escapeHandler)
+    } else if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      // CRITICAL: Prevent Enter key from submitting while modal is visible
+      // This prevents the bug where Enter key still submits the prompt after modal appears
+      e.preventDefault()
+      e.stopPropagation()
+      e.stopImmediatePropagation()
+      console.log("[PromptPrune] Enter key blocked while warning modal is visible")
+
+      // If Enter is pressed, focus the "Edit Prompt" button (safer default)
+      // User can use Tab to switch to "Proceed Anyway" if needed
+      cancelBtn.focus()
     }
   }
-  document.addEventListener('keydown', escapeHandler)
+  document.addEventListener('keydown', modalKeyHandler, { capture: true })
   
   document.body.appendChild(overlay)
   console.log("[PromptPrune] Warning modal added to DOM, z-index:", overlay.style.zIndex)
@@ -2059,352 +1897,241 @@ function showNotification(message: string, type: "success" | "error" | "warning"
   }, 3000)
 }
 
-// Position dropdown relative to icon (drop UP to avoid being cut off by responses above)
-function positionDropdown(iconButton: HTMLElement, dropdown: HTMLElement) {
-  const iconRect = iconButton.getBoundingClientRect()
-  const dropdownElement = dropdown.shadowRoot?.querySelector(".dropdown") as HTMLElement
-  const dropdownHeight = dropdownElement?.offsetHeight || 150
-  
-  dropdown.style.position = "fixed"
-  
-  // Check if there's enough space above, otherwise drop down
-  const spaceAbove = iconRect.top
-  const spaceBelow = window.innerHeight - iconRect.bottom
-  
-  // Prefer dropping UP (above icon) to avoid being cut off by prompt responses
-  if (spaceAbove >= dropdownHeight + 8 || spaceAbove > spaceBelow) {
-    // Drop UP (above the icon)
-    dropdown.style.bottom = `${window.innerHeight - iconRect.top + 8}px`
-    dropdown.style.top = "auto"
-    dropdown.style.right = `${window.innerWidth - iconRect.right}px`
-  } else {
-    // Drop DOWN (below the icon) - fallback if not enough space above
-    dropdown.style.top = `${iconRect.bottom + 8}px`
-    dropdown.style.bottom = "auto"
-    dropdown.style.right = `${window.innerWidth - iconRect.right}px`
-  }
-}
+async function maskSensitiveData(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement) {
+  const text = getText(textArea)
+  if (!text || text.trim().length === 0) return
 
-// Show dropdown
-function showDropdown(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement) {
-  const dropdown = textAreaDropdowns.get(textArea)
-  const iconButton = textAreaIcons.get(textArea)
-  if (!dropdown || !iconButton) return
-  
-  positionDropdown(iconButton, dropdown)
-  dropdown.style.display = "block"
-  dropdown.style.pointerEvents = "auto"
-}
+  showNotification("Analyzing for sensitive data...", "info")
 
-// Hide dropdown
-function hideDropdown(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement) {
-  const dropdown = textAreaDropdowns.get(textArea)
-  if (dropdown) {
-    dropdown.style.display = "none"
-    dropdown.style.pointerEvents = "none"
-  }
-}
+  // Use async detection which attempts ML first then falls back to regex
+  // This ensures we get the best possible detection even if ML fails
+  let sensitiveCheck: Awaited<ReturnType<typeof detectSensitiveContentML>>
 
-
-// Attach icon to textarea
-function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement) {
-  // Skip if already attached
-  if (textAreaIcons.has(textArea)) {
-    console.log("[PromptPrune] Icon already attached to textarea, skipping")
-    return
-  }
-  
-  // Also check if this textarea already has an icon in the DOM (prevent duplicates)
-  // Check both in parent and in document body
-  const rect = textArea.getBoundingClientRect()
-  const textAreaId = textArea.id || textArea.getAttribute('data-id') || textArea.getAttribute('name') || ''
-  const stableId = textAreaId || `textarea-${Math.round(rect.top)}-${Math.round(rect.left)}`
-  const expectedIconId = `promptprune-icon-${stableId}`
-  
-  const existingIcon = document.querySelector(`#${expectedIconId}`)
-  if (existingIcon) {
-    console.log("[PromptPrune] Existing icon found in DOM with ID:", expectedIconId, "- skipping attachment")
-    // Still add to WeakMap to track it
-    textAreaIcons.set(textArea, existingIcon as HTMLElement)
-    return
-  }
-  
-  // Improved duplicate detection: Check for icons near this textarea's position
-  // Use stricter matching to prevent duplicates on platforms like Grok
-  const allIcons = document.querySelectorAll('[id^="promptprune-icon-"]')
-  const textareaCenterX = rect.left + rect.width / 2
-  const textareaCenterY = rect.top + rect.height / 2
-  
-  for (const icon of Array.from(allIcons)) {
-    const iconRect = icon.getBoundingClientRect()
-    const iconCenterX = iconRect.left + iconRect.width / 2
-    const iconCenterY = iconRect.top + iconRect.height / 2
-    
-    // Check if icon is very close to this textarea (within 30px)
-    const distanceX = Math.abs(iconCenterX - textareaCenterX)
-    const distanceY = Math.abs(iconCenterY - textareaCenterY)
-    
-    if (distanceX < 30 && distanceY < 30) {
-      console.log("[PromptPrune] Duplicate icon found at similar position, removing:", icon.id)
-      icon.remove()
+  try {
+    console.log("[PromptPrune] Masking: Attempting ML detection...")
+    sensitiveCheck = await detectSensitiveContentML(text)
+    console.log("[PromptPrune] Masking: ML Result:", sensitiveCheck)
+  } catch (err) {
+    console.error("[PromptPrune] Masking: ML detection failed, using sync fallback", err)
+    // Fallback to sync
+    const syncResult = detectSensitiveContentSync(text)
+    console.log("[PromptPrune] Masking: Sync Fallback Result:", syncResult)
+    sensitiveCheck = {
+      hasSensitiveContent: syncResult.hasSensitiveContent,
+      detectedItems: syncResult.detectedItems,
+      riskScore: syncResult.riskScore,
+      shouldBlock: syncResult.shouldBlock
     }
   }
-  
-  // Also check by textarea element directly (if icon has data attribute)
-  const existingIconsForTextarea = Array.from(allIcons).filter(icon => {
-    const host = (icon as any).shadowRoot?.host
-    return host?.getAttribute('data-textarea-id') === stableId
-  })
-  existingIconsForTextarea.forEach(icon => {
-    console.log("[PromptPrune] Removing duplicate icon for same textarea:", icon.id)
-    icon.remove()
-  })
 
-  // Get textarea position and parent
-  const parent = textArea.parentElement
-  if (!parent) return
+  const sensitiveData = sensitiveCheck.detectedItems || []
+  console.log("[PromptPrune] Masking: Items to mask:", sensitiveData.length)
 
-  // Create icon button
-  const iconButton = createIconButton(textArea)
-  textAreaIcons.set(textArea, iconButton)
-  
-  // Store reference for template tracking and duplicate detection
-  if (iconButton.shadowRoot) {
-    const host = iconButton.shadowRoot.host as HTMLElement
-    host.setAttribute("data-textarea-ref", String(Math.random()))
-    host.setAttribute("data-textarea-id", stableId)
+  if (sensitiveData.length === 0) {
+    console.log("[PromptPrune] Masking: No items found, checking regex safety net...")
+    // Double check with sync detection just in case ML returned empty but sync finds something
+    const safetyNet = detectSensitiveContentSync(text)
+    if (safetyNet.detectedItems.length > 0) {
+      console.log("[PromptPrune] Masking: Safety net found items!", safetyNet.detectedItems)
+      sensitiveData.push(...safetyNet.detectedItems)
+    } else {
+      showNotification("No sensitive data found to mask", "info")
+    return
   }
+  }
+
+  let maskedText = text
   
-  // Create dropdown
-  const dropdownMenu = createDropdownMenu(textArea)
-  textAreaDropdowns.set(textArea, dropdownMenu)
-  document.body.appendChild(dropdownMenu)
+  // Re-run detection to get original matches (detectedItems only store masked values in 'value' property)
+  // We need the original text to replace it
+  const { detectSensitiveContent } = await import("~/lib/sensitive-content-detector")
+  const fullDetection = detectSensitiveContent(text)
   
-  // Create Clear All button
-  const clearButton = createClearButton(textArea, iconButton)
-  document.body.appendChild(clearButton)
+  // Build map of original matches by matching detected items
+  const originalMatches: Array<{ type: string; match: string; position: number }> = []
   
-  // Create smart analyze button (only smart mode now)
-  const smartButton = createSmartAnalyzeButton(textArea, iconButton)
-  textAreaSmartButtons.set(textArea, smartButton)
-  document.body.appendChild(smartButton)
-  
-  // Wire up smart button click
-  const smartButtonElement = smartButton.shadowRoot?.querySelector(".smart-analyze-btn") as HTMLElement
-  if (smartButtonElement) {
-    smartButtonElement.addEventListener("click", (e) => {
-      e.stopPropagation()
-      e.preventDefault()
-      const text = getText(textArea)
-      if (!text.trim()) {
-        showNotification("Please enter some text first", "warning")
-        return
+  // For each detected item, find corresponding original match from full detection
+  for (const item of sensitiveData) {
+    // Find matching item in full detection (by type and approximate position)
+    const matchingItem = fullDetection.detectedItems.find(di => 
+      di.type === item.type && 
+      Math.abs(di.position - item.position) < 10
+    )
+    
+    if (matchingItem) {
+      // Extract original match from text around the position
+      const searchStart = Math.max(0, matchingItem.position - 20)
+      const searchEnd = Math.min(text.length, matchingItem.position + 50)
+      const searchText = text.substring(searchStart, searchEnd)
+      
+      // Find original match using type-specific patterns
+      let originalMatch: string | null = null
+      
+      if (item.type.includes('pan')) {
+        // PAN: 5 letters + 4 digits + 1 letter (case-insensitive)
+        const panMatch = searchText.match(/[A-Za-z]{5}\d{4}[A-Za-z]/i)
+        if (panMatch) originalMatch = panMatch[0]
+      } else if (item.type.includes('aadhaar')) {
+        // Aadhaar: 12 digits with optional separators
+        const aadhaarMatch = searchText.match(/\d{4}[\s-]?\d{4}[\s-]?\d{4}/)
+        if (aadhaarMatch) originalMatch = aadhaarMatch[0]
+      } else if (item.type === 'email') {
+        const emailMatch = searchText.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}/i)
+        if (emailMatch) originalMatch = emailMatch[0]
+      } else if (item.type === 'phone' || item.type === 'indianPhone') {
+        const phoneMatch = searchText.match(/(?:\+?\d{1,4}[-.\s]?)?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}/)
+        if (phoneMatch) originalMatch = phoneMatch[0]
+      } else if (item.type === 'ssn') {
+        const ssnMatch = searchText.match(/\d{3}[-.\s]?\d{2}[-.\s]?\d{4}/)
+        if (ssnMatch) originalMatch = ssnMatch[0]
+      } else if (item.type === 'creditCard') {
+        const ccMatch = searchText.match(/(?:\d{4}[-\s]?){3}\d{4}/)
+        if (ccMatch) originalMatch = ccMatch[0]
       }
       
-      // Run smart analysis
-      analyzeWithSmartOptimizer(textArea, text)
+      if (originalMatch) {
+        const matchIndex = searchText.indexOf(originalMatch)
+        if (matchIndex >= 0) {
+          originalMatches.push({
+            type: item.type,
+            match: originalMatch,
+            position: searchStart + matchIndex
+          })
+        }
+      }
+    }
+  }
+  
+  // If no matches found via full detection, extract directly from text using item positions
+  if (originalMatches.length === 0) {
+    for (const item of sensitiveData) {
+      const start = Math.max(0, item.position - 10)
+      const end = Math.min(text.length, item.position + 30)
+      const snippet = text.substring(start, end)
+      
+      if (item.type.includes('pan')) {
+        const panMatch = snippet.match(/[A-Za-z]{5}\d{4}[A-Za-z]/i)
+        if (panMatch && panMatch.index !== undefined) {
+          originalMatches.push({ 
+            type: item.type, 
+            match: panMatch[0], 
+            position: start + panMatch.index 
+          })
+        }
+      } else if (item.type.includes('aadhaar')) {
+        const aadhaarMatch = snippet.match(/\d{4}[\s-]?\d{4}[\s-]?\d{4}/)
+        if (aadhaarMatch && aadhaarMatch.index !== undefined) {
+          originalMatches.push({ 
+            type: item.type, 
+            match: aadhaarMatch[0], 
+            position: start + aadhaarMatch.index 
+          })
+        }
+      }
+    }
+  }
+  
+  // Sort by position descending to replace from end to start (avoids index shifting)
+  originalMatches.sort((a, b) => b.position - a.position)
+  
+  let successfulMasks = 0
+  
+  // Replace matches from end to start
+  for (const matchInfo of originalMatches) {
+    if (maskedText.includes(matchInfo.match)) {
+      const typeLabel = matchInfo.type.replace(/_/g, ' ').toUpperCase().replace('STANDALONE', '').trim() || 'SENSITIVE'
+      // Escape the match for regex
+      const escapedMatch = matchInfo.match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      const regex = new RegExp(escapedMatch, 'g')
+      maskedText = maskedText.replace(regex, `[${typeLabel}_REDACTED]`)
+      successfulMasks++
+    }
+  }
+  
+
+  if (successfulMasks > 0) {
+    setText(textArea, maskedText)
+    showNotification(`Masked ${successfulMasks} sensitive items`, "success")
+    } else {
+    showNotification("Could not mask data (already masked?)", "warning")
+  }
+}
+
+// Initialize Capsule for textarea
+function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement) {
+  // Skip if already initialized for this textarea
+  if (textAreaCapsules.has(textArea)) {
+      return
+    }
+    
+  // Initialize Capsule UI (Singleton)
+  const capsule = getCapsuleUI()
+  capsule.mount()
+
+  // Update capsule target when textarea is focused or hovered
+  const updateCapsule = () => {
+    capsule.setTarget(textArea)
+    textAreaCapsules.set(textArea, capsule)
+  }
+
+  textArea.addEventListener('focus', updateCapsule)
+  textArea.addEventListener('mouseenter', updateCapsule)
+
+  // Initial update if this is the active element
+  if (document.activeElement === textArea) {
+    updateCapsule()
+  }
+
+  // Wire up Capsule events (once globally)
+  if (!window.hasCapsuleListeners) {
+    window.hasCapsuleListeners = true
+
+    capsule.on('optimize', async () => {
+      const target = capsule.target
+      if (target) {
+        const text = getText(target)
+        if (!text.trim()) {
+          showNotification("Please enter some text first", "warning")
+      return
+    }
+        capsule.setLoading(true)
+        try {
+          await analyzeWithSmartOptimizer(target, text)
+        } finally {
+          capsule.setLoading(false)
+        }
+      }
+    })
+
+    capsule.on('frameworks', () => {
+      const target = capsule.target
+      if (target) {
+        const text = getText(target)
+        showFrameworkSelector(target, text)
+      }
+    })
+
+    capsule.on('mask', () => {
+      const target = capsule.target
+      if (target) {
+        maskSensitiveData(target)
+      }
     })
   }
-  
-  // Position Clear button next to icon (to the right)
-  const updateClearButtonPosition = () => {
-    if (!iconButton || !clearButton) return
-    
-    const iconRect = iconButton.getBoundingClientRect()
-    
-    if (iconRect.width === 0 || iconRect.height === 0 || iconRect.top < 0) {
-      clearButton.style.display = "none"
-      return
-    }
-    
-    clearButton.style.position = "fixed"
-    clearButton.style.top = `${iconRect.top}px`
-    clearButton.style.left = `${iconRect.right + 8}px` // 8px to the right of icon
-    clearButton.style.right = "auto"
-    clearButton.style.bottom = "auto"
-    
-    const text = getText(textArea).trim()
-    const isFocused = document.activeElement === textArea
-    if ((text.length > 0 || isFocused) && iconRect.width > 0 && iconRect.height > 0) {
-      clearButton.style.display = "block"
-    } else {
-      clearButton.style.display = "none"
-    }
-  }
-  
-  // Position smart button below icon
-  const updateSmartButtonPosition = () => {
-    if (!iconButton || !smartButton) return
-    
-    const iconRect = iconButton.getBoundingClientRect()
-    
-    // Only position if icon is visible and has valid dimensions
-    if (iconRect.width === 0 || iconRect.height === 0 || iconRect.top < 0) {
-      smartButton.style.display = "none"
-      return
-    }
-    
-    const iconTop = iconRect.top
-    const iconLeft = iconRect.left
-    const iconHeight = iconRect.height || 28
-    
-    smartButton.style.position = "fixed"
-    smartButton.style.top = `${iconTop + iconHeight + 8}px` // Below icon with 8px gap
-    smartButton.style.left = `${iconLeft}px` // Same left as icon
-    smartButton.style.right = "auto"
-    smartButton.style.bottom = "auto"
-    
-    // Show button if icon is visible
-    const text = getText(textArea).trim()
-    const isFocused = document.activeElement === textArea
-    if ((text.length > 0 || isFocused) && iconRect.width > 0 && iconRect.height > 0) {
-      smartButton.style.display = "block"
-    } else {
-      smartButton.style.display = "none"
-    }
-  }
-  
-  // Initial positioning with delay to ensure icon is positioned first
-  setTimeout(() => {
-    updateClearButtonPosition()
-    updateSmartButtonPosition()
-  }, 100)
-  
+
   // Update position on scroll/resize
   const updatePositions = () => {
-    updateIconPosition()
-    // Delay button updates slightly to ensure icon position is set
-    setTimeout(() => {
-      updateClearButtonPosition()
-      updateSmartButtonPosition()
-    }, 10)
+    // Update capsule position if this is the active textarea
+    if (textAreaCapsules.get(textArea) === capsule) {
+      capsule.updatePosition(textArea.getBoundingClientRect())
+    }
   }
-  
+
   window.addEventListener('scroll', updatePositions, true)
   window.addEventListener('resize', updatePositions)
+  window.addEventListener('resize', updatePositions)
 
-  // Position icon inside textarea using fixed positioning
-  const updateIconPosition = () => {
-    if (!iconButton || !textArea) return
-    
-    // Check if textarea is still in DOM
-    if (!document.body.contains(textArea) && !textArea.isConnected) {
-      return
-    }
-    
-    const rect = textArea.getBoundingClientRect()
-    
-    // Only position if textarea is visible and has dimensions
-    if (rect.width === 0 || rect.height === 0 || rect.top < 0) {
-      iconButton.style.display = "none"
-      return
-    }
-    
-    // Position icon relative to input's right, outside the box
-    iconButton.style.position = "fixed"
-    iconButton.style.top = `${rect.top}px`
-    iconButton.style.left = `${rect.right + 8}px` // 8px to the right of input box
-    iconButton.style.right = "auto"
-    iconButton.style.bottom = "auto"
-    
-    // Show icon if textarea has text or is focused
-    const text = getText(textArea).trim()
-    const isFocused = document.activeElement === textArea
-    if (text.length > 0 || isFocused) {
-      iconButton.style.display = "block"
-      iconButton.style.opacity = "1"
-      iconButton.style.visibility = "visible"
-    } else {
-      iconButton.style.display = "none"
-    }
-  }
 
-  updateIconPosition()
-  
-  // Append icon to body (fixed positioning)
-  document.body.appendChild(iconButton)
-
-  // Handle icon click - toggle dropdown
-  const iconButtonElement = iconButton.shadowRoot?.querySelector(".icon-button") as HTMLElement
-  if (iconButtonElement) {
-    iconButtonElement.addEventListener("click", (e) => {
-      e.stopPropagation()
-      e.preventDefault()
-      const dropdown = textAreaDropdowns.get(textArea)
-      if (dropdown) {
-        // Check if dropdown is currently visible (check shadow host display)
-        const isVisible = dropdown.style.display === "block"
-        if (isVisible) {
-          hideDropdown(textArea)
-        } else {
-          showDropdown(textArea)
-        }
-      }
-    })
-  }
-
-  // Hide dropdown on outside click
-  const handleOutsideClick = (e: MouseEvent) => {
-    const dropdown = textAreaDropdowns.get(textArea)
-    const iconBtn = textAreaIcons.get(textArea)
-    if (dropdown && iconBtn) {
-      const target = e.target as Node
-      const dropdownElement = dropdown.shadowRoot?.querySelector(".dropdown")
-      const iconElement = iconBtn.shadowRoot?.querySelector(".icon-button")
-      
-      if (dropdownElement && iconElement) {
-        if (!dropdownElement.contains(target) && !iconElement.contains(target) && !textArea.contains(target)) {
-          hideDropdown(textArea)
-        }
-      }
-    }
-  }
-
-  document.addEventListener("click", handleOutsideClick, true)
-
-  // Update position on scroll/resize
-  let positionUpdateTimeout: number | null = null
-  const updatePosition = () => {
-    if (positionUpdateTimeout) {
-      clearTimeout(positionUpdateTimeout)
-    }
-    positionUpdateTimeout = window.setTimeout(() => {
-      updateIconPosition()
-      const dropdown = textAreaDropdowns.get(textArea)
-      const iconBtn = textAreaIcons.get(textArea)
-      if (dropdown && dropdown.style.display === "block" && iconBtn) {
-        positionDropdown(iconBtn, dropdown)
-      }
-    }, 10)
-  }
-
-  // Combined position update for icon, smart button, toggle, and field buttons
-  const updateAllPositions = () => {
-    updatePosition()
-    
-    // Update smart button position
-    const smartBtn = textAreaSmartButtons.get(textArea)
-    if (smartBtn && iconButton && textArea && textArea.isConnected) {
-      // Show/hide based on textarea visibility
-      const rect = textArea.getBoundingClientRect()
-      const text = getText(textArea).trim()
-      const isFocused = document.activeElement === textArea
-      if ((text.length > 0 || isFocused) && rect.width > 0 && rect.height > 0) {
-        smartBtn.style.display = "block"
-      } else {
-        smartBtn.style.display = "none"
-      }
-    }
-  }
-  
-  window.addEventListener("scroll", updateAllPositions, true)
-  window.addEventListener("resize", updateAllPositions)
-
-  // Make buttons draggable (P icon + smart button)
-  const smartBtn = textAreaSmartButtons.get(textArea)
-  if (smartBtn && iconButton) {
-    makeButtonsDraggable(textArea, iconButton, smartBtn)
-  }
 
   // Track if template was pre-filled
   let templatePreFilled = false
@@ -2504,12 +2231,7 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
           showMinimalNotification(message)
         }, 300)
         
-        // Store in icon for tooltip
-        const iconBtn = textAreaIcons.get(textArea)
-        if (iconBtn && iconBtn.shadowRoot) {
-          const host = iconBtn.shadowRoot.host as HTMLElement
-          host.setAttribute("data-template-prefilled", "true")
-        }
+
         
         // For contenteditable divs, place cursor at end
         if (textArea instanceof HTMLDivElement && textArea.isContentEditable) {
@@ -2591,15 +2313,11 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
   
   // Show icon on focus
   const showIcon = () => {
-    const iconBtn = textAreaIcons.get(textArea)
-    if (iconBtn) {
-      // Update position first
-      updateIconPosition()
-      // Then ensure visibility
-      iconBtn.style.display = "block"
-      iconBtn.style.opacity = "1"
-      iconBtn.style.visibility = "visible"
-    }
+    // Icon visibility is now managed by the Capsule UI
+    // We only need to ensure the Capsule is updated and visible
+    const capsule = getCapsuleUI()
+    capsule.setTarget(textArea)
+    capsule.show()
     
     // Pre-fill template on first focus if it's the first prompt
     preFillTemplate(undefined)
@@ -2612,52 +2330,12 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
       clearTimeout(hideTimeout)
     }
     hideTimeout = window.setTimeout(() => {
-      const iconBtn = textAreaIcons.get(textArea)
-      const dropdown = textAreaDropdowns.get(textArea)
-      const hasText = getText(textArea).trim().length > 0
-      
-      // Don't hide if:
-      // 1. Textarea is still focused
-      // 2. Dropdown is open
-      // 3. Framework UI is open
-      // 4. Textarea has text (keep visible for easy access)
-      if (iconBtn && document.activeElement !== textArea) {
-        const dropdownElement = dropdown?.shadowRoot?.querySelector(".dropdown")
-        const isDropdownOpen = dropdownElement && dropdownElement.style.display === "block"
-        const isFrameworkUIOpen = frameworkUI && frameworkUI.style.display === "block"
-        
-        // Only hide if dropdown is closed, framework UI is closed, no text, and not focused
-        if (!isDropdownOpen && !isFrameworkUIOpen && !hasText && document.activeElement !== textArea) {
-          iconBtn.style.opacity = "0"
-          setTimeout(() => {
-            const iconBtn2 = textAreaIcons.get(textArea)
-            if (iconBtn2 && document.activeElement !== textArea && !hasText) {
-              const dropdown2 = textAreaDropdowns.get(textArea)
-              const dropdownElement2 = dropdown2?.shadowRoot?.querySelector(".dropdown")
-              const isDropdownOpen2 = dropdownElement2 && dropdownElement2.style.display === "block"
-              const isFrameworkUIOpen2 = frameworkUI && frameworkUI.style.display === "block"
-              
-              // Double check before hiding
-              const currentText = getText(textArea).trim()
-              if (!isDropdownOpen2 && !isFrameworkUIOpen2 && document.activeElement !== textArea && !currentText) {
-                iconBtn2.style.display = "none"
-                iconBtn2.style.visibility = "hidden"
-              } else {
-                // Show it again if conditions changed
-                iconBtn2.style.display = "block"
-                iconBtn2.style.opacity = "1"
-                iconBtn2.style.visibility = "visible"
-              }
+      // Only hide if not focused
+      if (document.activeElement !== textArea) {
+        const capsule = getCapsuleUI()
+        capsule.hide()
             }
           }, 200)
-        } else {
-          // Keep icon visible if any condition is met
-          iconBtn.style.display = "block"
-          iconBtn.style.opacity = "1"
-          iconBtn.style.visibility = "visible"
-        }
-      }
-    }, 150)
   }
 
   textArea.addEventListener("focus", (e) => {
@@ -2670,7 +2348,7 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
   textArea.addEventListener("blur", hideIcon, true)
   textArea.addEventListener("input", (e) => {
     if (document.activeElement === textArea) {
-      updateIconPosition()
+      // updateIconPosition() // This function is no longer needed as Capsule handles positioning
     }
     
     // Don't pre-fill template if user cleared it
@@ -2700,18 +2378,33 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
   // Show icon when text is added or textarea is focused
   textArea.addEventListener("input", (e) => {
     const currentText = getText(textArea).trim()
-    const iconBtn = textAreaIcons.get(textArea)
-    if (iconBtn) {
-      if (currentText.length > 0 || document.activeElement === textArea) {
-        iconBtn.style.display = "block"
-        iconBtn.style.opacity = "1"
-        iconBtn.style.visibility = "visible"
-        updateIconPosition()
-      }
-    }
+    // The iconBtn logic is now handled by CapsuleUI, so this block is largely obsolete.
+    // Keeping it for now, but it might be removed in future refactors.
+    // const iconBtn = textAreaIcons.get(textArea)
+    // if (iconBtn) {
+    //   if (currentText.length > 0 || document.activeElement === textArea) {
+    //     iconBtn.style.display = "block"
+    //     iconBtn.style.opacity = "1"
+    //     iconBtn.style.visibility = "visible"
+    //     updateIconPosition()
+    //   }
+    // }
     // Reset original prompt when user significantly changes the text
     // This also tracks role in the text (see resetOriginalPrompt function)
     resetOriginalPrompt(e)
+
+    // Update Capsule UI
+    const capsule = getCapsuleUI()
+    if (textAreaCapsules.get(textArea) === capsule) {
+      // Update token count (approximate)
+      const tokenCount = currentText.split(/\s+/).filter(w => w.length > 0).length
+      capsule.updateTokenCount(tokenCount)
+
+      // Update sensitive warning
+      detectSensitiveContentML(currentText).then(result => {
+        capsule.updateSensitiveWarning(result.hasSensitiveContent, result.details)
+      })
+    }
     
     // Show framework suggestions based on current text (below Smart Analysis)
     if (currentText.length > 10) {
@@ -2737,7 +2430,7 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
     return flag
   }
   
-  const checkAndBlockSubmission = (currentText: string, event?: Event): boolean => {
+  const checkAndBlockSubmission = async (currentText: string, event?: Event): Promise<boolean> => {
     // If bypass is active for this textarea, allow submission
     const bypassFlag = getBypassFlag()
     if (bypassFlag.bypass) {
@@ -2751,14 +2444,28 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
     
     console.log("[PromptPrune] Checking for sensitive content in text:", currentText.substring(0, 100) + "...")
     
-    const sensitiveCheck = detectSensitiveContent(currentText.trim())
-    console.log("[PromptPrune] Sensitive content check result:", {
-      hasSensitiveContent: sensitiveCheck.hasSensitiveContent,
-      riskScore: sensitiveCheck.riskScore,
-      shouldBlock: sensitiveCheck.shouldBlock,
-      detectedItems: sensitiveCheck.detectedItems.length,
-      items: sensitiveCheck.detectedItems.map(item => ({ type: item.type, severity: item.severity }))
-    })
+    // Use ML-based detection ONLY (no regex fallback)
+    let sensitiveCheck: SensitiveContentResult
+    try {
+      // Use ML detection (async)
+      sensitiveCheck = await detectSensitiveContentML(currentText.trim())
+      console.log("[PromptPrune] ML-based sensitive content check result:", {
+        hasSensitiveContent: sensitiveCheck.hasSensitiveContent,
+        riskScore: sensitiveCheck.riskScore,
+        shouldBlock: sensitiveCheck.shouldBlock,
+        detectedItems: sensitiveCheck.detectedItems.length,
+        items: sensitiveCheck.detectedItems.map(item => ({ type: item.type, severity: item.severity }))
+      })
+    } catch (error) {
+      // If ML fails, return no sensitive content (model-only approach)
+      console.warn("[PromptPrune] ML detection failed, allowing submission (model-only mode):", error)
+      sensitiveCheck = {
+        hasSensitiveContent: false,
+        detectedItems: [],
+        riskScore: 0,
+        shouldBlock: false
+      }
+    }
     
     // Block if there's sensitive content (not just if shouldBlock is true)
     if (sensitiveCheck.hasSensitiveContent) {
@@ -2802,10 +2509,30 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
         const currentText = getText(textArea)
         console.log("[PromptPrune] Text from textarea (length:", currentText.length, "):", currentText.substring(0, 100))
         
-        if (checkAndBlockSubmission(currentText, e)) {
-          console.log("[PromptPrune] ✅ Submission BLOCKED by checkAndBlockSubmission")
-          return false
-        }
+        // Check with ML model (async)
+        detectSensitiveContentSync(currentText.trim()).then(syncCheck => {
+        if (syncCheck.hasSensitiveContent) {
+          e.preventDefault()
+          e.stopPropagation()
+          e.stopImmediatePropagation()
+          checkAndBlockSubmission(currentText, e).then(blocked => {
+            if (blocked) {
+                console.log("[PromptPrune] ✅ Submission BLOCKED by checkAndBlockSubmission (ML)")
+              }
+            })
+          } else {
+            // Also check with ML in background (redundant but ensures thorough check)
+        checkAndBlockSubmission(currentText, e).then(blocked => {
+          if (blocked) {
+            console.log("[PromptPrune] ✅ Submission BLOCKED by checkAndBlockSubmission (ML)")
+          }
+        }).catch(err => {
+          console.error("[PromptPrune] Error in sensitive check:", err)
+            })
+          }
+        }).catch(err => {
+          console.error("[PromptPrune] Error in ML sensitive check:", err)
+        })
         
         // Track role if no sensitive content
         if (hasRoleInText(currentText)) {
@@ -2838,15 +2565,33 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
         const currentText = getText(textArea)
         console.log("[PromptPrune] Document level - Text (length:", currentText.length, "):", currentText.substring(0, 100))
         
-        if (checkAndBlockSubmission(currentText, e)) {
-          console.log("[PromptPrune] ✅ Submission BLOCKED by document-level listener")
-          return false
+        // Check with ML model (async)
+        detectSensitiveContentSync(currentText.trim()).then(syncCheck => {
+        if (syncCheck.hasSensitiveContent) {
+          e.preventDefault()
+          e.stopPropagation()
+          e.stopImmediatePropagation()
+          checkAndBlockSubmission(currentText, e).then(blocked => {
+            if (blocked) {
+                console.log("[PromptPrune] ✅ Submission BLOCKED by document-level listener (ML)")
+            }
+          })
         }
+        }).catch(err => {
+          console.error("[PromptPrune] Error in ML sensitive check:", err)
+        })
+        
+        // Also check with ML in background
+        checkAndBlockSubmission(currentText, e).then(blocked => {
+          if (blocked) {
+            console.log("[PromptPrune] ✅ Submission BLOCKED by document-level listener (ML)")
+          }
+        }).catch(() => { })
       }
     }
   }
   
-  // Add listeners with highest priority (capture phase, not passive)
+  // Add listeners with highest priority (capture phase, non-passive)
   textArea.addEventListener("keydown", keydownListener, { capture: true, passive: false })
   // Document listener with even higher priority
   document.addEventListener("keydown", documentKeydownListener, { capture: true, passive: false })
@@ -2875,7 +2620,7 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
       }
       
       submitButton.addEventListener("click", listener, { capture: true, passive: false })
-      ;(submitButton as any).__promptprune_listener = listener
+        ; (submitButton as any).__promptprune_listener = listener
       console.log("[PromptPrune] Submit button listener attached successfully")
     } else {
       console.log("[PromptPrune] No submit button found, will retry on DOM changes")
@@ -2956,7 +2701,7 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
   }, 1000)
   
   // Re-setup if DOM changes (for dynamically added buttons)
-  const observer = new MutationObserver(() => {
+  const submitButtonObserver = new MutationObserver(() => {
     setupSubmitButtonListener()
   })
   
@@ -2966,7 +2711,7 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
   while (submitButtonParent && depth < 3) {
     // Check if parent is a valid Node before observing
     if (submitButtonParent instanceof Node) {
-      observer.observe(submitButtonParent, { childList: true, subtree: true })
+      submitButtonObserver.observe(submitButtonParent, { childList: true, subtree: true })
     }
     submitButtonParent = submitButtonParent.parentElement
     depth++
@@ -2974,12 +2719,13 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
   
   // Expose test function for this textarea
   // Enhanced test function for sensitive content detection
-  ;(textArea as any).__testSensitiveDetection = (testText?: string) => {
+  ; (textArea as any).__testSensitiveDetection = (testText?: string) => {
     const text = testText || getText(textArea)
     console.log("[PromptPrune] ===== TESTING SENSITIVE CONTENT DETECTION =====")
     console.log("[PromptPrune] Test text:", text)
     
-    const result = detectSensitiveContent(text)
+    // Use ML model only
+    detectSensitiveContentML(text).then(result => {
     console.log("[PromptPrune] Detection result:", {
       hasSensitiveContent: result.hasSensitiveContent,
       riskScore: result.riskScore,
@@ -2993,15 +2739,24 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
     } else {
       console.log("[PromptPrune] ✓ No sensitive content detected")
     }
-    
-    return result
+    }).catch(error => {
+      console.error("[PromptPrune] ML detection error:", error)
+    })
+
+    // Return a placeholder result (async, so can't return actual result)
+    return {
+      hasSensitiveContent: false,
+      detectedItems: [],
+      riskScore: 0,
+      shouldBlock: false
+    }
   }
   
   // Also add global test function
   if (!(window as any).__promptpruneTestSensitive) {
-    (window as any).__promptpruneTestSensitive = (testText: string) => {
-      console.log("[PromptPrune] ===== GLOBAL TEST: SENSITIVE CONTENT DETECTION =====")
-      const result = detectSensitiveContent(testText)
+    (window as any).__promptpruneTestSensitive = async (testText: string) => {
+      console.log("[PromptPrune] ===== GLOBAL TEST: SENSITIVE CONTENT DETECTION (ML ONLY) =====")
+      const result = await detectSensitiveContentML(testText)
       console.log("[PromptPrune] Test text:", testText)
       console.log("[PromptPrune] Result:", result)
       
@@ -3017,10 +2772,10 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
   }
   
   // Old test function (keep for compatibility)
-  ;(textArea as any).__testSensitiveDetectionOld = (testText?: string) => {
+  ; (textArea as any).__testSensitiveDetectionOld = async (testText?: string) => {
     const text = testText || getText(textArea).trim()
-    console.log("[PromptPrune] Testing sensitive detection with text:", text.substring(0, 100))
-    const result = detectSensitiveContent(text)
+    console.log("[PromptPrune] Testing sensitive detection with text (ML ONLY):", text.substring(0, 100))
+    const result = await detectSensitiveContentML(text)
     console.log("[PromptPrune] Detection result:", result)
     if (result.hasSensitiveContent) {
       showSensitiveContentWarning(textArea, text, result)
@@ -3030,17 +2785,16 @@ function attachIconToTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | H
     return result
   }
   console.log("[PromptPrune] Test function available: textarea.__testSensitiveDetection('your text here')")
-  
-  // Initialize real-time components
-  initializeRealTimeComponents(textArea)
 }
+
+
 
 /**
  * Initialize all real-time prompt assistance components
  */
 function initializeRealTimeComponents(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement): void {
   // Check if already initialized
-  if (textAreaRealTimeAssistants.has(textArea)) {
+  if (textAreaCapsules.has(textArea)) {
     return
   }
 
@@ -3052,7 +2806,8 @@ function initializeRealTimeComponents(textArea: HTMLTextAreaElement | HTMLDivEle
     autocomplete: localStorage.getItem('pp-realtime-autocomplete') !== 'false',
     redundancy: localStorage.getItem('pp-realtime-redundancy') !== 'false',
     smartSuggestions: localStorage.getItem('pp-realtime-smart-suggestions') !== 'false',
-    grammar: localStorage.getItem('pp-realtime-grammar') !== 'false',
+    // Grammar feature removed from user-facing UI/UX
+    grammar: false,
   }
 
   try {
@@ -3092,22 +2847,29 @@ function initializeRealTimeComponents(textArea: HTMLTextAreaElement | HTMLDivEle
 // Note: Content scripts run in isolated world, so we need to inject into page context
 if (typeof window !== "undefined") {
   // First, expose in content script context (for internal use)
-  ;(window as any).testComplexPrompt = testComplexPrompt
-  ;(window as any).quickTestShorten = quickTestShorten
-  ;(window as any).quickTestFrameworkSwitching = quickTestFrameworkSwitching
-  ;(window as any).testSmartOptimizer = testSmartOptimizer
-  ;(window as any).runAllPromptTests = runAllTests
-  ;(window as any).quickPromptTest = quickTest
-  ;(window as any).PROMPT_TEST_CASES = PROMPT_TEST_CASES
+  ; (window as any).testComplexPrompt = testComplexPrompt
+    ; (window as any).quickTestShorten = quickTestShorten
+    ; (window as any).quickTestFrameworkSwitching = quickTestFrameworkSwitching
+    ; (window as any).testSmartOptimizer = testSmartOptimizer
+    ; (window as any).runAllPromptTests = runAllTests
+    ; (window as any).quickPromptTest = quickTest
+    ; (window as any).PROMPT_TEST_CASES = PROMPT_TEST_CASES
   
-  // Inject into page context (so user can access from page console)
-  // Use a more reliable injection method that works even with CSP
+  // DISABLED: Test bridge injection causes CSP violations
+  // Use content script context only for testing
   function injectTestBridge() {
+    // Disabled to avoid CSP violations - test functions available in content script context only
+    return
+  }
+  
+  // DISABLED: Test bridge injection code removed to avoid CSP violations
+  /*
+  function injectTestBridgeOriginal() {
     try {
       // Check if already injected
       if ((document as any).__promptpruneBridgeInjected) {
         console.log('[PromptPrune] Test bridge already injected, skipping')
-        return
+        return;
       }
       
       // Get test cases data safely (only basic info to avoid circular refs)
@@ -3237,33 +2999,11 @@ if (typeof window !== "undefined") {
       console.error('[PromptPrune] Failed to inject test bridge:', error)
     }
   }
+  */
   
-  // Inject immediately and also on DOM ready
-  if (document.head || document.documentElement) {
-    console.log('[PromptPrune] Attempting to inject test bridge...')
-    injectTestBridge()
-  } else {
-    console.warn('[PromptPrune] Document head/body not available yet')
-  }
-  
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      console.log('[PromptPrune] DOM loaded, injecting test bridge...')
-      injectTestBridge()
-    })
-  } else {
-    // DOM already ready, inject after a short delay to ensure page is ready
-    setTimeout(() => {
-      console.log('[PromptPrune] DOM ready, injecting test bridge...')
-      injectTestBridge()
-    }, 100)
-  }
-  
-  // Also try injecting after page fully loads
-  window.addEventListener('load', () => {
-    console.log('[PromptPrune] Page loaded, injecting test bridge...')
-    setTimeout(injectTestBridge, 200)
-  })
+  // DISABLED: Test bridge injection to avoid CSP violations
+  // Test functions are available in content script context only
+  // Users can access them via browser console in extension context
   
   // Listen for messages from page context
   window.addEventListener('message', async (event) => {
@@ -3319,11 +3059,331 @@ if (typeof window !== "undefined") {
       }
     }
   })
+
+    // Expose model diagnostic functions
+    ; (window as any).checkModelStatus = async () => {
+      const unifiedModel = getUnifiedModelManager()
+      const status = unifiedModel.getModelStatus()
+      const cached = await unifiedModel.isCached()
+      console.log('[PromptPrune] Model Status:', {
+        ...status,
+        cached,
+        timestamp: new Date().toISOString()
+      })
+      return { ...status, cached }
+    }
+
+    ; (window as any).forceModelRetry = async () => {
+      const unifiedModel = getUnifiedModelManager()
+      console.log('[PromptPrune] Forcing model retry...')
+      await unifiedModel.forceRetryInitialization()
+      return await (window as any).checkModelStatus()
+    }
+
+    ; (window as any).testHuggingFaceAccess = async () => {
+      console.log('[PromptPrune] Testing HuggingFace access...')
+
+      // First, check if we can access the manifest
+      let manifestPermissions: string[] = []
+      try {
+        const manifestUrl = chrome.runtime.getURL('manifest.json')
+        const manifestResponse = await fetch(manifestUrl)
+        if (manifestResponse.ok) {
+          const manifest = await manifestResponse.json()
+          manifestPermissions = manifest.host_permissions || []
+          console.log('[PromptPrune] Manifest host_permissions:', manifestPermissions)
+
+          const hasHuggingFace = manifestPermissions.some((p: string) =>
+            p.includes('huggingface.co')
+          )
+          if (!hasHuggingFace) {
+            console.error('[PromptPrune] ❌ HuggingFace permissions NOT FOUND in manifest!')
+            console.error('[PromptPrune] Current permissions:', manifestPermissions)
+            console.error('[PromptPrune] 🔧 FIX: Rebuild extension and reload!')
+            return {
+              results: [],
+              allAccessible: false,
+              manifestCheck: 'FAILED - HuggingFace permissions missing',
+              manifestPermissions
+            }
+          } else {
+            console.log('[PromptPrune] ✅ HuggingFace permissions found in manifest')
+          }
+        }
+      } catch (error: any) {
+        console.warn('[PromptPrune] Could not check manifest:', error.message)
+      }
+
+      const testUrls = [
+        'https://huggingface.co/VisheshKJha/tk-prompt-prune/resolve/main/config.json',
+        'https://huggingface.co/VisheshKJha/tk-prompt-prune/resolve/main/model_quantized.onnx',
+        'https://huggingface.co/VisheshKJha/tk-prompt-prune/resolve/main/model.onnx',
+        'https://huggingface.co/VisheshKJha/tk-prompt-prune/resolve/main/tokenizer.json',
+      ]
+
+      const results: any[] = []
+      for (const url of testUrls) {
+        try {
+          console.log(`[PromptPrune] Testing: ${url}`)
+          const response = await fetch(url, { method: 'GET', redirect: 'follow' })
+
+          // Check if we got redirected
+          const finalUrl = response.url
+          const wasRedirected = finalUrl !== url
+
+          // Try to read the response to see what we actually got
+          const contentType = response.headers.get('content-type') || 'unknown'
+          const isHTML = contentType.includes('text/html')
+          const isJSON = contentType.includes('application/json')
+          const isBinary = contentType.includes('application/octet-stream') || contentType.includes('application/x-')
+
+          // Read first few bytes to check if it's HTML
+          let firstBytes = ''
+          let isActuallyHTML = false
+          try {
+            const clone = response.clone()
+            const text = await clone.text()
+            firstBytes = text.substring(0, 200)
+            isActuallyHTML = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<!doctype') || text.trim().startsWith('<html')
+          } catch (e) {
+            // If we can't read it, that's fine
+          }
+
+          results.push({
+            url,
+            finalUrl: wasRedirected ? finalUrl : undefined,
+            wasRedirected,
+            status: response.status,
+            ok: response.ok,
+            contentType,
+            isHTML,
+            isActuallyHTML,
+            isJSON,
+            isBinary,
+            accessible: response.ok && !isHTML && !isActuallyHTML,
+            firstBytes: firstBytes.substring(0, 100) // First 100 chars for debugging
+          })
+
+          console.log(`[PromptPrune] ${url}:`, {
+            status: response.status,
+            finalUrl: wasRedirected ? finalUrl : 'same',
+            contentType,
+            isHTML,
+            isActuallyHTML,
+            accessible: response.ok && !isHTML && !isActuallyHTML,
+            issue: isActuallyHTML ? 'Returning HTML instead of file (404 or auth page)' :
+              isHTML ? 'Content-Type says HTML' :
+                response.ok ? 'OK' : 'Failed'
+          })
+
+          if (isActuallyHTML) {
+            console.error(`[PromptPrune] ⚠️ Got HTML response! First 100 chars:`, firstBytes.substring(0, 100))
+          }
+        } catch (error: any) {
+          results.push({
+            url,
+            error: error.message,
+            accessible: false
+          })
+          console.error(`[PromptPrune] ${url}:`, error.message)
+
+          // Check if it's a CORS/permission error
+          if (error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
+            console.error('[PromptPrune] ⚠️ CORS/Permission error detected!')
+            console.error('[PromptPrune] This means the extension cannot access HuggingFace')
+            console.error('[PromptPrune] 🔧 FIX: Rebuild extension and reload!')
+          }
+        }
+      }
+
+      const allAccessible = results.every(r => r.accessible)
+      if (!allAccessible) {
+        console.error('[PromptPrune] ❌ HuggingFace access test FAILED!')
+        console.error('[PromptPrune] This usually means:')
+        console.error('  1. Extension manifest missing https://huggingface.co/* in host_permissions')
+        console.error('  2. Extension not reloaded after manifest update')
+        console.error('  3. CORS issue (check browser console for CORS errors)')
+        console.error('  4. Model files missing on HuggingFace (check Files tab)')
+        console.error('[PromptPrune] 🔧 FIX: Reload the extension in chrome://extensions/')
+      } else {
+        console.log('[PromptPrune] ✅ HuggingFace access test PASSED!')
+      }
+
+      return {
+        results,
+        allAccessible,
+        manifestPermissions,
+        manifestCheck: manifestPermissions.length > 0 ? 'OK' : 'Could not check'
+      }
+    }
+
+    // Non-async wrapper for testHuggingFaceAccess (for console use)
+    ; (window as any).testHuggingFace = () => {
+      console.log('[PromptPrune] Running HuggingFace access test...')
+      return (window as any).testHuggingFaceAccess().then((result: any) => {
+        console.log('[PromptPrune] Test complete!')
+        console.log('[PromptPrune] Results:', result)
+        return result
+      }).catch((error: any) => {
+        console.error('[PromptPrune] Test failed:', error)
+        return { error: error.message }
+      })
+    }
+
+    // Non-async wrapper for checkModelStatus
+    ; (window as any).checkModel = () => {
+      console.log('[PromptPrune] Checking model status...')
+      return (window as any).checkModelStatus().then((result: any) => {
+        console.log('[PromptPrune] Model status:', result)
+        return result
+      }).catch((error: any) => {
+        console.error('[PromptPrune] Check failed:', error)
+        return { error: error.message }
+      })
+    }
+
+    // Non-async wrapper for forceModelRetry
+    ; (window as any).retryModel = () => {
+      console.log('[PromptPrune] Forcing model retry...')
+      return (window as any).forceModelRetry().then((result: any) => {
+        console.log('[PromptPrune] Retry complete!')
+        console.log('[PromptPrune] New status:', result)
+        return result
+      }).catch((error: any) => {
+        console.error('[PromptPrune] Retry failed:', error)
+        return { error: error.message }
+      })
+    }
+
+    // Test functions for Intent and Framework Matching
+    ; (window as any).testIntentAndFramework = async (prompt?: string) => {
+      const unifiedModel = getUnifiedModelManager()
+      const testPrompt = prompt || "Write a blog post about artificial intelligence"
+
+      console.log("🧪 Testing Intent & Framework Matching")
+      console.log("=".repeat(80))
+      console.log(`Prompt: "${testPrompt}"`)
+      console.log("")
+
+      try {
+        // Test Intent Classification
+        console.log("📊 Testing Intent Classification...")
+        const intentResult = await unifiedModel.classifyIntent(testPrompt)
+        console.log("✅ Intent Result:")
+        console.log(`   Intent: ${intentResult.intent}`)
+        console.log(`   Confidence: ${(intentResult.confidence * 100).toFixed(1)}%`)
+        console.log("   All Intents:")
+        intentResult.allIntents.forEach((i, idx) => {
+          console.log(`   ${idx + 1}. ${i.intent}: ${(i.score * 100).toFixed(1)}%`)
+        })
+
+        console.log("")
+
+        // Test Framework Matching
+        console.log("📊 Testing Framework Matching...")
+        const frameworkResult = await unifiedModel.matchFramework(testPrompt)
+        console.log("✅ Framework Result:")
+        console.log(`   Framework: ${frameworkResult.framework}`)
+        console.log(`   Score: ${(frameworkResult.score * 100).toFixed(1)}%`)
+        console.log("   All Frameworks:")
+        frameworkResult.allScores.forEach((f, idx) => {
+          console.log(`   ${idx + 1}. ${f.framework}: ${(f.score * 100).toFixed(1)}%`)
+        })
+
+        return {
+          intent: intentResult,
+          framework: frameworkResult
+        }
+      } catch (error) {
+        console.error("❌ Test failed:", error)
+        return { error: error instanceof Error ? error.message : String(error) }
+      }
+    }
+
+    // Test suite for multiple prompts
+    ; (window as any).testIntentFrameworkSuite = async () => {
+      const testCases = [
+        { name: "Content Creation", prompt: "Write a blog post about AI", expectedFramework: "roses", expectedIntent: "content creation" },
+        { name: "Professional", prompt: "Write a professional email to a client", expectedFramework: "race", expectedIntent: "professional communication" },
+        { name: "Reasoning", prompt: "How does photosynthesis work? Explain step by step", expectedFramework: "cot", expectedIntent: "explanation" },
+        { name: "Code Generation", prompt: "Write a Python function to sort a list", expectedFramework: "create", expectedIntent: "code generation" },
+        { name: "Data Analysis", prompt: "Analyze this sales data and create a report", expectedFramework: "race", expectedIntent: "data analysis" },
+        { name: "Creative Writing", prompt: "Write a short story about a robot", expectedFramework: "roses", expectedIntent: "creative writing" },
+        { name: "Tutorial", prompt: "Create a step-by-step guide on how to bake a cake", expectedFramework: "guide", expectedIntent: "explanation" }
+      ]
+
+      const unifiedModel = getUnifiedModelManager()
+      console.log("🧪 Running Intent & Framework Test Suite")
+      console.log("=".repeat(80))
+
+      const results = []
+
+      for (const testCase of testCases) {
+        console.log(`\n📝 Test: ${testCase.name}`)
+        console.log(`   Prompt: "${testCase.prompt}"`)
+
+        try {
+          const intentResult = await unifiedModel.classifyIntent(testCase.prompt)
+          const frameworkResult = await unifiedModel.matchFramework(testCase.prompt)
+
+          const intentMatch = intentResult.intent.toLowerCase() === testCase.expectedIntent.toLowerCase()
+          const frameworkMatch = frameworkResult.framework.toLowerCase() === testCase.expectedFramework.toLowerCase()
+
+          console.log(`   Intent: ${intentResult.intent} (${(intentResult.confidence * 100).toFixed(1)}%) ${intentMatch ? '✅' : '❌'} Expected: ${testCase.expectedIntent}`)
+          console.log(`   Framework: ${frameworkResult.framework} (${(frameworkResult.score * 100).toFixed(1)}%) ${frameworkMatch ? '✅' : '❌'} Expected: ${testCase.expectedFramework}`)
+
+          results.push({
+            name: testCase.name,
+            prompt: testCase.prompt,
+            intent: { actual: intentResult.intent, expected: testCase.expectedIntent, match: intentMatch },
+            framework: { actual: frameworkResult.framework, expected: testCase.expectedFramework, match: frameworkMatch },
+            passed: intentMatch && frameworkMatch
+          })
+        } catch (error) {
+          console.error(`   ❌ Error: ${error instanceof Error ? error.message : String(error)}`)
+          results.push({
+            name: testCase.name,
+            prompt: testCase.prompt,
+            error: error instanceof Error ? error.message : String(error),
+            passed: false
+          })
+        }
+      }
+
+      // Summary
+      console.log("\n" + "=".repeat(80))
+      console.log("📊 TEST SUMMARY")
+      console.log("=".repeat(80))
+      const passed = results.filter(r => r.passed).length
+      const total = results.length
+      const intentPassed = results.filter(r => r.intent && r.intent.match).length
+      const frameworkPassed = results.filter(r => r.framework && r.framework.match).length
+
+      console.log(`\n✅ Overall: ${passed}/${total} tests passed (${(passed / total * 100).toFixed(1)}%)`)
+      console.log(`✅ Intent Classification: ${intentPassed}/${total} correct (${(intentPassed / total * 100).toFixed(1)}%)`)
+      console.log(`✅ Framework Matching: ${frameworkPassed}/${total} correct (${(frameworkPassed / total * 100).toFixed(1)}%)`)
+
+      return results
+    }
   
   console.log("🧪 PromptPrune Test Functions Available (Content Script):")
   console.log("  - runAllPromptTests() - Run comprehensive test suite with 20+ prompt types")
   console.log("  - quickPromptTest('your prompt') - Quick test for a specific prompt")
   console.log("  - PROMPT_TEST_CASES - Array of all test cases")
+  console.log("")
+  console.log("🧪 Intent & Framework Testing:")
+  console.log("  - testIntentAndFramework('your prompt') - Test intent and framework for a prompt")
+  console.log("  - testIntentFrameworkSuite() - Run test suite with multiple prompts")
+  console.log("")
+  console.log("📊 Model Diagnostics (NO AWAIT NEEDED):")
+  console.log("  - testHuggingFace() - Test HuggingFace access (returns promise, no await needed)")
+  console.log("  - checkModel() - Check model status (returns promise, no await needed)")
+  console.log("  - retryModel() - Force retry model initialization (returns promise, no await needed)")
+  console.log("")
+  console.log("📊 Model Diagnostics (WITH AWAIT - if your console supports it):")
+  console.log("  - await checkModelStatus() - Check ML model loading status")
+  console.log("  - await forceModelRetry() - Force retry model initialization")
+  console.log("  - await testHuggingFaceAccess() - Test if extension can access HuggingFace")
 }
 
 // Inject design system CSS
@@ -3397,7 +3457,49 @@ function attachGlobalSensitiveContentListeners() {
   console.log("[PromptPrune] Attaching GLOBAL sensitive content listeners (early interception)")
   
   // Global Enter key listener - catches ALL Enter key presses
+  // Track events we've manually triggered to prevent infinite loops
+  const manuallyTriggeredEvents = new WeakSet<Event>()
+  // Track if we're currently processing a click/keydown to prevent concurrent processing
+  let isProcessingClick = false
+  let isProcessingKeydown = false
+  // Track last processed text to avoid duplicate checks
+  let lastProcessedText: string | null = null
+  let lastProcessedTime = 0
+
   const globalKeydownListener = (e: KeyboardEvent) => {
+    // Skip if this is an event we manually triggered
+    if (manuallyTriggeredEvents.has(e)) {
+      return
+    }
+
+    // CRITICAL: Check if warning modal is visible - if so, don't process Enter key
+    const warningModal = document.getElementById("promptprune-sensitive-warning")
+    if (warningModal) {
+      // Use computed styles to check if modal is actually visible
+      const computed = window.getComputedStyle(warningModal)
+      const isVisible = computed.display !== 'none' &&
+        computed.visibility !== 'hidden' &&
+        computed.opacity !== '0' &&
+        warningModal.offsetParent !== null
+
+      if (isVisible) {
+        // Modal is visible - block Enter to prevent submission
+        if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+          e.preventDefault()
+          e.stopPropagation()
+          e.stopImmediatePropagation()
+          console.log("[PromptPrune] GLOBAL: Enter key blocked - warning modal is visible (display:", computed.display, "opacity:", computed.opacity, ")")
+          return
+        }
+      }
+    }
+
+    // Skip if we're already processing a keydown
+    if (isProcessingKeydown) {
+      console.log("[PromptPrune] GLOBAL: Already processing keydown, skipping")
+      return
+    }
+
     if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
       const activeEl = document.activeElement
       if (!activeEl) return
@@ -3426,22 +3528,87 @@ function attachGlobalSensitiveContentListeners() {
         }
         
         const text = getText(activeEl as HTMLElement)
-        if (text && text.trim().length > 0) {
-          const sensitiveCheck = detectSensitiveContent(text.trim())
-          if (sensitiveCheck.hasSensitiveContent) {
-            console.log("[PromptPrune] ⚠️ GLOBAL LISTENER: Sensitive content detected on Enter key!")
-            e.preventDefault()
-            e.stopPropagation()
-            e.stopImmediatePropagation()
-            
-            if (!textAreaIcons.has(textArea)) {
-              // Textarea not yet attached, attach it now
-              attachIconToTextArea(textArea)
-            }
-            
-            // Show warning
-            showSensitiveContentWarning(textArea, text.trim(), sensitiveCheck)
+        const textTrimmed = text?.trim() || ''
+        if (textTrimmed.length > 0) {
+          // Debounce: Skip if we just processed the same text within 500ms
+          const now = Date.now()
+          if (lastProcessedText === textTrimmed && (now - lastProcessedTime) < 500) {
+            console.log("[PromptPrune] GLOBAL: Duplicate check within 500ms, skipping")
+            return
           }
+
+          // CRITICAL: Prevent default IMMEDIATELY to block submission
+          // We'll allow it later if no sensitive content is found
+              e.preventDefault()
+              e.stopPropagation()
+              e.stopImmediatePropagation()
+              
+          // Mark as processing and track text
+          isProcessingKeydown = true
+          lastProcessedText = textTrimmed
+          lastProcessedTime = now
+
+          console.log("[PromptPrune] GLOBAL: Enter key blocked, checking sensitive content...")
+
+          // Use ML detection (with regex fallback)
+          detectSensitiveContentML(textTrimmed).then(sensitiveCheck => {
+            console.log("[PromptPrune] GLOBAL: ML check result:", {
+              hasSensitiveContent: sensitiveCheck.hasSensitiveContent,
+              riskScore: sensitiveCheck.riskScore,
+              detectedItems: sensitiveCheck.detectedItems.length,
+              items: sensitiveCheck.detectedItems.map(item => ({ type: item.type, severity: item.severity }))
+            })
+            if (sensitiveCheck.hasSensitiveContent) {
+              console.log("[PromptPrune] ⚠️ GLOBAL LISTENER: Sensitive content detected on Enter key (ML)!")
+
+              // Ensure textarea has capsule
+              if (!textAreaCapsules.has(textArea)) {
+                initializeCapsuleForTextArea(textArea)
+              }
+
+              // Show warning (event already prevented)
+              showSensitiveContentWarning(textArea, text.trim(), sensitiveCheck)
+            } else {
+              console.log("[PromptPrune] GLOBAL: No sensitive content detected, allowing submission")
+              // No sensitive content - manually trigger submit
+              // Find and click the submit button
+              const submitButton = textArea.closest('form')?.querySelector('button[type="submit"]') as HTMLButtonElement ||
+                document.querySelector('button[aria-label*="send" i], button[aria-label*="submit" i]') as HTMLButtonElement ||
+                textArea.closest('div')?.querySelector('button[type="submit"]') as HTMLButtonElement
+
+              if (submitButton) {
+                console.log("[PromptPrune] GLOBAL: Manually triggering submit button")
+                submitButton.click()
+              } else {
+                // Fallback: dispatch Enter key event on the textarea
+                console.log("[PromptPrune] GLOBAL: Dispatching Enter key event as fallback")
+                const enterEvent = new KeyboardEvent('keydown', {
+                  key: 'Enter',
+                  code: 'Enter',
+                  keyCode: 13,
+                  which: 13,
+                  bubbles: true,
+                  cancelable: true
+                })
+                manuallyTriggeredEvents.add(enterEvent)
+                isProcessingKeydown = false // Reset before dispatching
+                textArea.dispatchEvent(enterEvent)
+              }
+            }
+            // Reset processing flag
+            isProcessingKeydown = false
+          }).catch((error) => {
+            console.warn("[PromptPrune] GLOBAL: ML detection error, allowing submission:", error)
+            // On error, allow submission by manually triggering
+            const submitButton = textArea.closest('form')?.querySelector('button[type="submit"]') as HTMLButtonElement ||
+              document.querySelector('button[aria-label*="send" i]') as HTMLButtonElement
+            if (submitButton) {
+              isProcessingKeydown = false // Reset before clicking
+              submitButton.click()
+            } else {
+              isProcessingKeydown = false
+            }
+          })
         }
       }
     }
@@ -3449,6 +3616,17 @@ function attachGlobalSensitiveContentListeners() {
   
   // Global click listener for submit buttons - catches ALL button clicks
   const globalClickListener = (e: MouseEvent) => {
+    // Skip if this is an event we manually triggered
+    if (manuallyTriggeredEvents.has(e)) {
+      return
+    }
+
+    // Skip if we're already processing a click
+    if (isProcessingClick) {
+      console.log("[PromptPrune] GLOBAL: Already processing click, skipping")
+      return
+    }
+
     const target = e.target as HTMLElement
     if (!target) return
     
@@ -3502,7 +3680,8 @@ function attachGlobalSensitiveContentListeners() {
       
       if (textArea) {
         const text = getText(textArea)
-        if (text && text.trim().length > 0) {
+        const textTrimmed = text?.trim() || ''
+        if (textTrimmed.length > 0) {
           // Check bypass flag if textarea is tracked
           const bypassFlag = textAreaBypassFlags.get(textArea)
           if (bypassFlag && bypassFlag.bypass) {
@@ -3510,21 +3689,65 @@ function attachGlobalSensitiveContentListeners() {
             return
           }
           
-          const sensitiveCheck = detectSensitiveContent(text.trim())
-          if (sensitiveCheck.hasSensitiveContent) {
-            console.log("[PromptPrune] ⚠️ GLOBAL LISTENER: Sensitive content detected on button click!")
+          // Debounce: Skip if we just processed the same text within 500ms
+          const now = Date.now()
+          if (lastProcessedText === textTrimmed && (now - lastProcessedTime) < 500) {
+            console.log("[PromptPrune] GLOBAL: Duplicate check within 500ms, skipping")
+            return
+          }
+
+          // CRITICAL: Prevent default IMMEDIATELY to block submission
+          // We'll allow it later if no sensitive content is found
             e.preventDefault()
             e.stopPropagation()
             e.stopImmediatePropagation()
             
-            // Ensure textarea is attached
-            if (!textAreaIcons.has(textArea)) {
-              attachIconToTextArea(textArea)
+          // Mark as processing and track text
+          isProcessingClick = true
+          lastProcessedText = textTrimmed
+          lastProcessedTime = now
+
+          console.log("[PromptPrune] GLOBAL: Submit button click blocked, checking sensitive content...")
+
+          // Use ML detection (with regex fallback)
+          detectSensitiveContentML(textTrimmed).then(mlCheck => {
+            if (mlCheck.hasSensitiveContent) {
+              console.log("[PromptPrune] ⚠️ GLOBAL LISTENER: Sensitive content detected on button click (ML)!")
+
+              // Ensure textarea has capsule
+              if (!textAreaCapsules.has(textArea)) {
+                initializeCapsuleForTextArea(textArea)
+              }
+
+              // Show warning with ML results (event already prevented)
+                showSensitiveContentWarning(textArea, text.trim(), mlCheck)
+            } else {
+              console.log("[PromptPrune] GLOBAL: No sensitive content detected, allowing submission")
+              // No sensitive content - manually trigger submit
+              // Re-dispatch the click event on the button
+              const newClickEvent = new MouseEvent('click', {
+                bubbles: true,
+                cancelable: true,
+                view: window
+              })
+              manuallyTriggeredEvents.add(newClickEvent)
+              isProcessingClick = false // Reset before dispatching
+              target.dispatchEvent(newClickEvent)
             }
-            
-            // Show warning
-            showSensitiveContentWarning(textArea, text.trim(), sensitiveCheck)
-          }
+            // Reset processing flag
+            isProcessingClick = false
+          }).catch((error) => {
+            console.warn("[PromptPrune] GLOBAL: ML detection error, allowing submission:", error)
+            // On error, allow submission by re-dispatching click
+            const newClickEvent = new MouseEvent('click', {
+              bubbles: true,
+              cancelable: true,
+              view: window
+            })
+            manuallyTriggeredEvents.add(newClickEvent)
+            isProcessingClick = false // Reset before dispatching
+            target.dispatchEvent(newClickEvent)
+          })
         }
       }
     }
@@ -3551,7 +3774,7 @@ function init() {
 
   // Attach to all textareas
   textAreas.forEach(textArea => {
-    attachIconToTextArea(textArea)
+    initializeCapsuleForTextArea(textArea)
   })
   
   // Check if we should reset global role flag (when new conversation starts)
@@ -3598,11 +3821,9 @@ const observer = new MutationObserver(() => {
       }
       processedIds.add(stableId)
       
-      // Double check it's valid and not already attached
-      if (!textAreaIcons.has(textArea) && textArea.isConnected) {
-        if (rect.width > 0 && rect.height > 0 && textArea.offsetParent !== null) {
-          attachIconToTextArea(textArea)
-        }
+      // Re-attach capsule if needed
+      if (!textAreaCapsules.has(textArea) && textArea.isConnected) {
+        initializeCapsuleForTextArea(textArea)
       }
     })
   }, 300)

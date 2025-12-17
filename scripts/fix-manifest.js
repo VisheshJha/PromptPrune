@@ -87,7 +87,11 @@ const allMatches = [
   "https://www.deepseek.com/*",
   "https://deepseek.com/*",
   "https://www.midjourney.com/*",
-  "https://midjourney.com/*"
+  "https://midjourney.com/*",
+  "https://huggingface.co/*",
+  "https://*.huggingface.co/*",
+  "http://localhost/*",
+  "http://127.0.0.1/*"
 ]
 
 if (!manifest.content_scripts || manifest.content_scripts.length === 0) {
@@ -116,7 +120,7 @@ if (!manifest.content_scripts || manifest.content_scripts.length === 0) {
       updated = true
     }
   })
-  
+
   if (updated) {
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
     console.log('✅ Updated content_scripts in manifest.json')
@@ -127,6 +131,13 @@ if (!manifest.content_scripts || manifest.content_scripts.length === 0) {
 
 // Always ensure permissions and background are set
 let manifestChanged = false
+
+// Add CSP for WASM (Critical for onnxruntime-web)
+// Forcefully set it to ensure it's correct
+manifest.content_security_policy = manifest.content_security_policy || {}
+manifest.content_security_policy.extension_pages = "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+manifestChanged = true
+console.log('✅ Added CSP for WASM')
 
 if (!manifest.permissions) {
   manifest.permissions = []
@@ -159,7 +170,9 @@ const requiredHosts = [
   "https://www.deepseek.com/*",
   "https://deepseek.com/*",
   "https://www.midjourney.com/*",
-  "https://midjourney.com/*"
+  "https://midjourney.com/*",
+  "https://huggingface.co/*",
+  "https://*.huggingface.co/*"
 ]
 requiredHosts.forEach(host => {
   if (!manifest.host_permissions.includes(host)) {

@@ -12,7 +12,15 @@ export async function countOpenAITokens(
 ): Promise<number> {
   try {
     // Use dynamic import to handle potential bundling issues
-    const tiktoken = await import("js-tiktoken")
+    const tiktoken = await import("js-tiktoken").catch(() => {
+      // If import fails, return fallback
+      throw new Error("js-tiktoken not available")
+    })
+    
+    // Check if tiktoken has required methods
+    if (!tiktoken || typeof tiktoken.encoding_for_model !== 'function' && typeof tiktoken.get_encoding !== 'function') {
+      throw new Error("tiktoken methods not available")
+    }
     
     // Map model names to tiktoken encodings
     const modelMap: Record<string, string> = {
@@ -25,17 +33,29 @@ export async function countOpenAITokens(
     const encodingModel = modelMap[model] || "gpt-4"
     let encoding
     try {
-      encoding = tiktoken.encoding_for_model(encodingModel as any)
+      if (typeof tiktoken.encoding_for_model === 'function') {
+        encoding = tiktoken.encoding_for_model(encodingModel as any)
+      } else {
+        encoding = tiktoken.get_encoding("cl100k_base")
+      }
     } catch {
       // Fallback to cl100k_base encoding if model not found
-      encoding = tiktoken.get_encoding("cl100k_base")
+      if (typeof tiktoken.get_encoding === 'function') {
+        encoding = tiktoken.get_encoding("cl100k_base")
+      } else {
+        throw new Error("No encoding method available")
+      }
+    }
+    
+    if (!encoding || typeof encoding.encode !== 'function') {
+      throw new Error("Encoding not valid")
     }
     
     const tokens = encoding.encode(text)
     const count = tokens.length
     return count
   } catch (error) {
-    console.error("Error counting OpenAI tokens:", error)
+    // Fallback to character-based estimation (silent)
     // Fallback: rough estimate (1 token ≈ 4 characters)
     return Math.ceil(text.length / 4)
   }

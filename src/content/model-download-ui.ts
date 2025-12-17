@@ -3,7 +3,7 @@
  * Shows download prompt and progress for ML models
  */
 
-import { getModelManager } from "~/lib/model-manager"
+import { getUnifiedModelManager } from "~/lib/unified-model-manager"
 
 export interface DownloadProgress {
   progress: number // 0-100
@@ -59,7 +59,7 @@ export function showModelDownloadPrompt(): Promise<boolean> {
           </li>
           <li style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
             <span style="color: #10b981; font-size: 20px;">✓</span>
-            <span>One-time download (~160MB)</span>
+            <span>One-time download (~30-50MB)</span>
           </li>
           <li style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
             <span style="color: #10b981; font-size: 20px;">✓</span>
@@ -211,54 +211,58 @@ export function hideDownloadProgress(): void {
  * Download models with progress tracking
  */
 export async function downloadModelsWithProgress(): Promise<boolean> {
-  const modelManager = getModelManager()
+  const unifiedModel = getUnifiedModelManager()
   
   try {
     showDownloadProgress({
       progress: 0,
       status: 'downloading',
-      message: 'Initializing models...'
+      message: 'Initializing unified model...'
     })
     
-    // Download embedder first (smallest, most useful)
+    // Download unified model (single model for all tasks)
     showDownloadProgress({
-      progress: 10,
+      progress: 20,
       status: 'downloading',
-      message: 'Downloading embedder (MiniLM)...'
+      message: 'Downloading unified model...'
     })
-    await modelManager.initializeEmbedder()
+    
+    await unifiedModel.initialize()
     
     showDownloadProgress({
-      progress: 40,
+      progress: 80,
       status: 'downloading',
-      message: 'Downloading classifier (DistilBERT)...'
+      message: 'Finalizing model setup...'
     })
-    await modelManager.initializeClassifier()
     
-    showDownloadProgress({
-      progress: 70,
-      status: 'downloading',
-      message: 'Downloading NER model (DistilBERT)...'
-    })
-    await modelManager.initializeNER()
+    // Small delay to show progress
+    await new Promise(resolve => setTimeout(resolve, 500))
     
     showDownloadProgress({
       progress: 100,
       status: 'ready',
-      message: 'All models ready!'
+      message: 'Model ready!'
     })
     
-    // Set flag in localStorage that models are downloaded
-    localStorage.setItem('promptprune-models-downloaded', 'true')
+    // Set flag in localStorage that model is downloaded
+    localStorage.setItem('promptprune-unified-model-downloaded', 'true')
     
     return true
   } catch (error) {
-    console.error('[ModelDownload] Download failed:', error)
+    console.warn('[ModelDownload] Download failed, extension will use fallback methods:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Download failed'
+    
+    // Show user-friendly message
     showDownloadProgress({
       progress: 0,
       status: 'error',
-      message: error instanceof Error ? error.message : 'Download failed'
+      message: `Model unavailable. Extension will work with fallback methods. (${errorMessage.substring(0, 50)})`
     })
+    
+    // Don't block the extension - it will work with fallbacks
+    // Clear the cache flag so it doesn't keep trying
+    localStorage.removeItem('promptprune-unified-model-downloaded')
+    
     return false
   }
 }

@@ -17,15 +17,26 @@ export async function countAnthropicTokens(
     // Anthropic models use a similar tokenizer to GPT-3.5
     // This is an approximation - for production, consider using Anthropic's tokenizer
     // Use dynamic import to handle potential bundling issues
-    const tiktoken = await import("js-tiktoken")
+    const tiktoken = await import("js-tiktoken").catch(() => {
+      throw new Error("js-tiktoken not available")
+    })
+    
+    if (!tiktoken || typeof tiktoken.get_encoding !== 'function') {
+      throw new Error("tiktoken methods not available")
+    }
+    
     const encoding = tiktoken.get_encoding("cl100k_base")
+    if (!encoding || typeof encoding.encode !== 'function') {
+      throw new Error("Encoding not valid")
+    }
+    
     const tokens = encoding.encode(text)
     const count = tokens.length
     
     // Anthropic tokens are roughly 1.1x OpenAI tokens based on common benchmarks
     return Math.ceil(count * 1.1)
   } catch (error) {
-    console.error("Error counting Anthropic tokens:", error)
+    // Fallback to character-based estimation (silent)
     // Fallback: rough estimate
     return Math.ceil(text.length / 3.5)
   }

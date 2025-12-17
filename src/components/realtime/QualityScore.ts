@@ -4,6 +4,7 @@
  */
 
 import { extractIntent } from '../../lib/intelligent-processor'
+import { debounce } from '../../lib/debounce'
 
 export interface QualityScoreOptions {
   textarea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement
@@ -148,21 +149,14 @@ export class QualityScore {
   }
 
   private attachListeners(): void {
-    this.textarea.addEventListener('input', () => {
-      this.debouncedUpdate()
-    })
+    this.textarea.addEventListener('input', this.debouncedUpdate)
     window.addEventListener('scroll', () => this.updatePosition(), true)
     window.addEventListener('resize', () => this.updatePosition())
   }
 
-  private debouncedUpdate(): void {
-    if (this.debounceTimer) {
-      clearTimeout(this.debounceTimer)
-    }
-    this.debounceTimer = window.setTimeout(() => {
-      this.update()
-    }, 300)
-  }
+  private debouncedUpdate = debounce(() => {
+    this.update()
+  }, 1000) // 1000ms debounce for quality score (heavier computation)
 
   private update(): void {
     if (!this.shadowRoot) return

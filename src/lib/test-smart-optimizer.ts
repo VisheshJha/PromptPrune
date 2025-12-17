@@ -4,7 +4,7 @@
  */
 
 import { optimizePromptSmartly } from './smart-prompt-optimizer'
-import { getModelManager } from './model-manager'
+import { getUnifiedModelManager } from './unified-model-manager'
 
 export async function testSmartOptimizer(prompt: string) {
   console.log("🧪 Testing Smart Prompt Optimizer")
@@ -14,12 +14,10 @@ export async function testSmartOptimizer(prompt: string) {
   
   try {
     // Check model status
-    const modelManager = getModelManager()
+    const modelManager = getUnifiedModelManager()
     const status = modelManager.getStatus()
     console.log("Model Status:")
-    console.log("  Classifier:", status.classifier ? "✅ Ready" : "❌ Not loaded")
-    console.log("  Embedder:", status.embedder ? "✅ Ready" : "❌ Not loaded")
-    console.log("  NER:", status.ner ? "✅ Ready" : "❌ Not loaded")
+    console.log("  Unified Model:", status.model ? "✅ Ready" : "❌ Not loaded")
     console.log("  Total Size:", status.totalSize)
     console.log("  Estimated RAM:", status.estimatedRAM)
     console.log()
@@ -34,7 +32,8 @@ export async function testSmartOptimizer(prompt: string) {
     console.log("Duration:", duration, "ms")
     console.log()
     console.log("Results:")
-    console.log("  Framework:", result.framework, `(${FRAMEWORKS[result.framework].name})`)
+    const { FRAMEWORKS } = await import('./prompt-frameworks')
+    console.log("  Framework:", result.framework, `(${FRAMEWORKS[result.framework]?.name || result.framework})`)
     console.log("  Confidence:", Math.round(result.confidence * 100) + "%")
     console.log("  Intent Category:", result.intent.category)
     console.log("  Action:", result.intent.action)
