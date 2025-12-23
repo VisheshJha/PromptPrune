@@ -96,6 +96,21 @@ const getBypassFlagForTextarea = (textArea: HTMLTextAreaElement | HTMLDivElement
 const textAreaFieldButtons = new WeakMap<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | HTMLInputElement, HTMLElement>()
 let frameworkUI: HTMLElement | null = null
 
+import { authService } from "~/lib/auth-service"
+
+// ... imports
+
+// Function to update capsule auth state (can be called from multiple places)
+function updateCapsuleAuthState(loggedIn: boolean) {
+  try {
+    const capsule = getCapsuleUI()
+    capsule.setLocked(!loggedIn)
+    console.log(`[PromptPrune] ${loggedIn ? '✅' : '🔒'} Auth state updated: ${loggedIn ? 'Unlocked' : 'Locked'} capsule`)
+  } catch (err) {
+    console.warn('[PromptPrune] Failed to update capsule auth state:', err)
+  }
+}
+
 // Helper to add element to textareas if valid and not seen
 function addIfValid(
   el: HTMLElement,
@@ -112,11 +127,25 @@ function addIfValid(
   const rect = el.getBoundingClientRect()
   if (rect.width > 0 && rect.height > 0 && el.offsetParent !== null) {
     seen.add(el)
-    textAreas.push(el as HTMLTextAreaElement | HTMLDivElement | HTMLInputElement)
+    const textArea = el as HTMLTextAreaElement | HTMLDivElement | HTMLInputElement
+    textAreas.push(textArea)
+
+    // Always initialize capsule, but set locked state based on auth
+    initializeCapsuleForTextArea(textArea)
+
+    // Check auth state and update capsule
+    authService.getCurrentUser().then(user => {
+      updateCapsuleAuthState(user !== null)
+    }).catch(err => {
+      console.error("Auth check failed in content script", err)
+      updateCapsuleAuthState(false)
+    })
+
     return true
   }
   return false
 }
+
 
 // Enhanced platform detection
 function findTextAreas(): Array<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement> {
@@ -1932,13 +1961,14 @@ async function maskSensitiveData(textArea: HTMLTextAreaElement | HTMLDivElement 
 
 // Initialize Capsule for textarea
 function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement) {
+  const capsule = getCapsuleUI()
+
   // Skip if already initialized for this textarea
-  if (textAreaCapsules.has(textArea)) {
-    return
+  if (textAreaCapsules.get(textArea) === capsule) {
+    return capsule
   }
 
   // Initialize Capsule UI (Singleton)
-  const capsule = getCapsuleUI()
   capsule.mount()
 
   // Update capsule target when textarea is focused or hovered
@@ -3717,6 +3747,28 @@ async function checkAndStartAutoDownload(): Promise<void> {
 // Start IMMEDIATELY - don't wait for DOM
 // Attach global listeners right away to catch early submissions
 attachGlobalSensitiveContentListeners()
+
+// Listen for auth state changes from popup
+if (typeof chrome !== 'undefined' && chrome.runtime) {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'AUTH_STATE_CHANGED') {
+      updateCapsuleAuthState(message.loggedIn)
+      sendResponse({ success: true })
+    }
+    return true
+  })
+}
+
+// Periodic auth check (every 5 seconds) as fallback
+// This ensures capsule updates even if message passing fails
+setInterval(async () => {
+  try {
+    const user = await authService.getCurrentUser()
+    updateCapsuleAuthState(user !== null)
+  } catch (err) {
+    // Silently ignore - auth check might fail if not configured
+  }
+}, 5000)
 
 // Also initialize when DOM is ready
 if (document.readyState === "loading") {

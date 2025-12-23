@@ -14,6 +14,7 @@
     "test:coverage": "vitest --coverage"
   },
   "dependencies": {
+    "@plasmohq/storage": "^1.15.0",
     "@xenova/transformers": "^2.17.2",
     "compromise": "^14.14.4",
     "js-tiktoken": "^1.0.21",
@@ -68,7 +69,15 @@
       "storage",
       "unlimitedStorage",
       "scripting",
-      "tabs"
-    ]
+      "tabs",
+      "identity"
+    ],
+    "oauth2": {
+      "client_id": "1072024805594-7pt4fg4vhmj7m357m28ntqsb0q3fnkvp.apps.googleusercontent.com",
+      "scopes": [
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile"
+      ]
+    }
   }
 }

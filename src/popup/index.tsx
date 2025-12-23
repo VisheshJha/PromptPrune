@@ -4,10 +4,13 @@ import { SmartOptimizer } from "./components/SmartOptimizer"
 import { SavingsCalculator } from "./components/SavingsCalculator"
 import { SavingsHistory } from "./components/SavingsHistory"
 import { FrameworkSelector } from "./components/FrameworkSelector"
+import { LoginScreen } from "./components/LoginScreen"
+import { authService, type UserProfile } from "~/lib/auth-service"
 import "./style.css"
 
-// Test runner component
+// ... (TestRunner component remains unchanged) ...
 function TestRunner() {
+  // ... (TestRunner code) ...
   const [testResults, setTestResults] = useState<any>(null)
   const [isRunning, setIsRunning] = useState(false)
   const [testPrompt, setTestPrompt] = useState("")
@@ -15,7 +18,7 @@ function TestRunner() {
   const runTests = async () => {
     setIsRunning(true)
     setTestResults(null)
-    
+
     try {
       // Send message to content script to run tests
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
@@ -29,13 +32,13 @@ function TestRunner() {
         func: async () => {
           return new Promise((resolve, reject) => {
             const requestId = 'test_' + Date.now() + '_' + Math.random()
-            
+
             window.postMessage({
               type: 'PROMPTPRUNE_TEST',
               action: 'runAllTests',
               requestId: requestId
             }, '*')
-            
+
             const listener = (event: MessageEvent) => {
               if (event.data && event.data.type === 'PROMPTPRUNE_TEST_RESULT' && event.data.requestId === requestId) {
                 window.removeEventListener('message', listener)
@@ -47,7 +50,7 @@ function TestRunner() {
               }
             }
             window.addEventListener('message', listener)
-            
+
             setTimeout(() => {
               window.removeEventListener('message', listener)
               reject(new Error('Test timeout'))
@@ -76,10 +79,10 @@ function TestRunner() {
       alert("Please enter a test prompt")
       return
     }
-    
+
     setIsRunning(true)
     setTestResults(null)
-    
+
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!tab.id) {
@@ -91,14 +94,14 @@ function TestRunner() {
         func: async (prompt: string) => {
           return new Promise((resolve, reject) => {
             const requestId = 'test_' + Date.now() + '_' + Math.random()
-            
+
             window.postMessage({
               type: 'PROMPTPRUNE_TEST',
               action: 'quickTest',
               prompt: prompt,
               requestId: requestId
             }, '*')
-            
+
             const listener = (event: MessageEvent) => {
               if (event.data && event.data.type === 'PROMPTPRUNE_TEST_RESULT' && event.data.requestId === requestId) {
                 window.removeEventListener('message', listener)
@@ -110,7 +113,7 @@ function TestRunner() {
               }
             }
             window.addEventListener('message', listener)
-            
+
             setTimeout(() => {
               window.removeEventListener('message', listener)
               reject(new Error('Test timeout'))
@@ -142,7 +145,7 @@ function TestRunner() {
         <p className="text-sm text-gray-600 mb-4">
           Run comprehensive tests on prompt parsing and framework selection
         </p>
-        
+
         <button
           onClick={runTests}
           disabled={isRunning}
@@ -209,6 +212,24 @@ function TestRunner() {
 }
 
 function IndexPopup() {
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null)
+  const [isLoadingAuth, setIsLoadingAuth] = useState(true)
+
+  // Auth check on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const user = await authService.getCurrentUser()
+        setCurrentUser(user)
+      } catch (error) {
+        console.error("Auth check failed:", error)
+      } finally {
+        setIsLoadingAuth(false)
+      }
+    }
+    checkAuth()
+  }, [])
+
   // Load last prompt from localStorage
   const [prompt, setPrompt] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -218,7 +239,7 @@ function IndexPopup() {
   })
   const [optimizedPrompt, setOptimizedPrompt] = useState("")
   const [activeTab, setActiveTab] = useState<"analyze" | "tokens" | "frameworks" | "savings" | "history" | "tests">("analyze")
-  
+
   // Save prompt to localStorage when it changes
   useEffect(() => {
     if (prompt.trim() && typeof window !== 'undefined') {
@@ -226,75 +247,125 @@ function IndexPopup() {
     }
   }, [prompt])
 
+  const handleLogout = async () => {
+    await authService.logout()
+    setCurrentUser(null)
+    
+    // Notify all content scripts that logout occurred
+    try {
+      chrome.tabs.query({}, (tabs) => {
+        tabs.forEach(tab => {
+          if (tab.id) {
+            chrome.tabs.sendMessage(tab.id, { type: 'AUTH_STATE_CHANGED', loggedIn: false }).catch(() => {
+              // Ignore errors (tab might not have content script)
+            })
+          }
+        })
+      })
+    } catch (err) {
+      console.warn("Failed to notify content scripts:", err)
+    }
+  }
+
+  // Show loading spinner while checking auth
+  if (isLoadingAuth) {
+    return (
+      <div className="w-[520px] h-[500px] flex items-center justify-center bg-white">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+      </div>
+    )
+  }
+
+  // Show login screen if not authenticated
+  if (!currentUser) {
+    return (
+      <div className="w-[520px] min-h-[500px] bg-white rounded-lg shadow-lg overflow-hidden">
+        <LoginScreen onLoginSuccess={async () => {
+          setIsLoadingAuth(true)
+          const user = await authService.getCurrentUser()
+          setCurrentUser(user)
+          setIsLoadingAuth(false)
+        }} />
+      </div>
+    )
+  }
+
   return (
     <div className="w-[520px] min-h-[480px] bg-white rounded-lg shadow-lg overflow-hidden">
       {/* Header - Material Design */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4">
-        <h1 className="text-2xl font-normal text-gray-900">PromptPrune</h1>
-        <p className="text-sm text-gray-600 mt-1">
-          Analyze and optimize AI prompts, reduce costs
-        </p>
+      <div className="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-start">
+        <div>
+          <h1 className="text-2xl font-normal text-gray-900">PromptPrune</h1>
+          <p className="text-sm text-gray-600 mt-1">
+            Analyze and optimize AI prompts, reduce costs
+          </p>
+        </div>
+        <div className="flex flex-col items-end">
+          <div className="text-xs text-gray-500 mb-1">
+            Signed in as {currentUser.email}
+          </div>
+          <button
+            onClick={handleLogout}
+            className="text-xs text-red-600 hover:text-red-800 underline"
+          >
+            Sign Out
+          </button>
+        </div>
       </div>
 
       {/* Tabs - Material Design */}
       <div className="border-b border-gray-200 bg-white flex overflow-x-auto">
         <button
           onClick={() => setActiveTab("analyze")}
-          className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${
-            activeTab === "analyze"
+          className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${activeTab === "analyze"
               ? "text-primary-600 border-b-2 border-primary-600"
               : "text-gray-600 hover:text-gray-900"
-          }`}
+            }`}
         >
           Analyze
         </button>
         <button
           onClick={() => setActiveTab("tokens")}
-          className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${
-            activeTab === "tokens"
+          className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${activeTab === "tokens"
               ? "text-primary-600 border-b-2 border-primary-600"
               : "text-gray-600 hover:text-gray-900"
-          }`}
+            }`}
         >
           Tokens
         </button>
         <button
           onClick={() => setActiveTab("frameworks")}
-          className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${
-            activeTab === "frameworks"
+          className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${activeTab === "frameworks"
               ? "text-primary-600 border-b-2 border-primary-600"
               : "text-gray-600 hover:text-gray-900"
-          }`}
+            }`}
         >
           Frameworks
         </button>
         <button
           onClick={() => setActiveTab("savings")}
-          className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${
-            activeTab === "savings"
+          className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${activeTab === "savings"
               ? "text-primary-600 border-b-2 border-primary-600"
               : "text-gray-600 hover:text-gray-900"
-          }`}
+            }`}
         >
           Savings
         </button>
         <button
           onClick={() => setActiveTab("history")}
-          className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${
-            activeTab === "history"
+          className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${activeTab === "history"
               ? "text-primary-600 border-b-2 border-primary-600"
               : "text-gray-600 hover:text-gray-900"
-          }`}
+            }`}
         >
           History
         </button>
         <button
           onClick={() => setActiveTab("tests")}
-          className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${
-            activeTab === "tests"
+          className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${activeTab === "tests"
               ? "text-primary-600 border-b-2 border-primary-600"
               : "text-gray-600 hover:text-gray-900"
-          }`}
+            }`}
         >
           🧪 Tests
         </button>

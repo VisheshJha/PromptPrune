@@ -8,6 +8,7 @@ export class CapsuleUI {
   private element: HTMLElement
   private shadowRoot: ShadowRoot
   private state: 'collapsed' | 'expanded' | 'alert' = 'collapsed'
+  private isLocked: boolean = false
   private listeners: { [key: string]: Function[] } = {}
   private sensitiveCount: number = 0
   private tokenCount: number = 0
@@ -55,6 +56,14 @@ export class CapsuleUI {
   }
 
   /**
+   * Set the lock state (unauthenticated)
+   */
+  setLocked(locked: boolean) {
+    this.isLocked = locked
+    this.renderContent()
+  }
+
+  /**
    * Update position relative to the active textarea
    */
   updatePosition(rect: DOMRect) {
@@ -79,6 +88,8 @@ export class CapsuleUI {
    * Set loading state
    */
   setLoading(loading: boolean) {
+    if (this.isLocked) return
+
     const optimizeBtn = this.shadowRoot.getElementById('optimize-btn')
     if (optimizeBtn) {
       optimizeBtn.textContent = loading ? '...' : 'Optimize'
@@ -104,6 +115,8 @@ export class CapsuleUI {
    * Update state (tokens, sensitive data)
    */
   updateState(tokens: number, sensitiveItems: number) {
+    if (this.isLocked) return
+
     this.tokenCount = tokens
     this.sensitiveCount = sensitiveItems
 
@@ -120,6 +133,7 @@ export class CapsuleUI {
    * Update token count
    */
   updateTokenCount(count: number) {
+    if (this.isLocked) return
     this.tokenCount = count
     this.renderContent()
   }
@@ -128,6 +142,7 @@ export class CapsuleUI {
    * Update sensitive content warning
    */
   updateSensitiveWarning(hasSensitive: boolean, details: any[]) {
+    if (this.isLocked) return
     const sensitiveCount = hasSensitive ? (details?.length || 1) : 0
     this.updateState(this.tokenCount, sensitiveCount)
   }
@@ -191,7 +206,7 @@ export class CapsuleUI {
         padding: 6px 12px;
       }
 
-      .capsule.alert {
+      .capsule.alert, .capsule.locked {
         border-color: var(--pp-danger);
         box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
       }
@@ -209,6 +224,11 @@ export class CapsuleUI {
         font-weight: bold;
         font-size: 14px;
         flex-shrink: 0;
+        transition: background 0.3s;
+      }
+
+      .capsule.locked .logo-container {
+        background: var(--pp-danger);
       }
 
       /* Content Section (Hidden when collapsed) */
@@ -309,7 +329,7 @@ export class CapsuleUI {
       }
       
       /* Alert Badge */
-      .alert-badge {
+      .alert-badge, .lock-badge {
         background: var(--pp-danger);
         color: white;
         font-size: 10px;
@@ -319,13 +339,31 @@ export class CapsuleUI {
         display: none;
       }
       
-      .capsule.alert .alert-badge {
+      .capsule.alert .alert-badge, .capsule.locked .lock-badge {
         display: block;
+      }
+
+      .locked-message {
+        font-size: 11px;
+        color: var(--pp-danger);
+        font-weight: 600;
+        display: none;
+      }
+
+      .capsule.locked .locked-message {
+        display: block;
+      }
+
+      .capsule.locked .actions, 
+      .capsule.locked .divider,
+      .capsule.locked #token-display {
+        display: none;
       }
     `
 
     const container = document.createElement('div')
     container.className = 'capsule'
+    container.id = 'pp-capsule'
 
     container.innerHTML = `
       <div class="logo-container" id="logo-btn">P</div>
@@ -333,6 +371,8 @@ export class CapsuleUI {
         <div class="stats">
           <span id="token-display">0 tokens</span>
           <span class="alert-badge">Sensitive Data!</span>
+          <span class="lock-badge">Locked</span>
+          <span class="locked-message">Login from extension</span>
         </div>
         <div class="divider"></div>
         <div class="actions">
@@ -354,16 +394,19 @@ export class CapsuleUI {
 
     optimizeBtn?.addEventListener('click', (e) => {
       e.stopPropagation()
+      if (this.isLocked) return
       this.emit('optimize')
     })
 
     frameworkBtn?.addEventListener('click', (e) => {
       e.stopPropagation()
+      if (this.isLocked) return
       this.emit('frameworks')
     })
 
     maskBtn?.addEventListener('click', (e) => {
       e.stopPropagation()
+      if (this.isLocked) return
       this.emit('mask')
     })
 
@@ -379,7 +422,7 @@ export class CapsuleUI {
 
   private renderContent() {
     const tokenDisplay = this.shadowRoot.getElementById('token-display')
-    const capsule = this.shadowRoot.querySelector('.capsule')
+    const capsule = this.shadowRoot.getElementById('pp-capsule')
     const maskBtn = this.shadowRoot.getElementById('mask-btn')
 
     if (tokenDisplay) {
@@ -387,11 +430,16 @@ export class CapsuleUI {
     }
 
     if (capsule) {
-      if (this.state === 'alert') {
+      if (this.isLocked) {
+        capsule.classList.add('locked')
+        capsule.classList.remove('alert')
+      } else if (this.state === 'alert') {
         capsule.classList.add('alert')
+        capsule.classList.remove('locked')
         maskBtn?.classList.add('visible')
       } else {
         capsule.classList.remove('alert')
+        capsule.classList.remove('locked')
         maskBtn?.classList.remove('visible')
       }
     }
