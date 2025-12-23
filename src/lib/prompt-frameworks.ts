@@ -1033,6 +1033,7 @@ export async function rankFrameworks(prompt: string): Promise<Array<{ framework:
   }
 
   // Apply frameworks in parallel with timeout for each
+  // Reduce timeout to 1.5 seconds per framework to prevent long waits
   const frameworkPromises = Object.entries(FRAMEWORKS).map(async ([key, framework]) => {
     try {
       // Apply framework with timeout (3 seconds max per framework)

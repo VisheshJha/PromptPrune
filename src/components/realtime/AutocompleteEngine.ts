@@ -137,8 +137,9 @@ export class AutocompleteEngine {
     }
     this.debounceTimer = window.setTimeout(() => {
       this.update()
-    }, 150) // Faster than spell check for better UX
+    }, 2000) // Significantly increased to 2000ms debounce to prevent typing lag
   }
+
 
   private update(): void {
     if (!this.suggestionElement) return
@@ -157,11 +158,11 @@ export class AutocompleteEngine {
       this.dismissSuggestion()
       return
     }
-    
+
     // Don't suggest if cursor is in the middle of a word
     const beforeCursor = text.substring(0, cursorPosition)
     const lastCharBeforeCursor = beforeCursor[beforeCursor.length - 1]
-    
+
     // Only suggest after a space, punctuation, or at start
     // Don't suggest if last character is a word character (we're in middle of word)
     if (lastCharBeforeCursor && lastCharBeforeCursor.match(/\w/)) {
@@ -170,7 +171,7 @@ export class AutocompleteEngine {
       // But only if the last complete word is finished (followed by space or nothing)
       const words = beforeCursor.trim().split(/\s+/)
       const lastWord = words[words.length - 1] || ''
-      
+
       // If last word is incomplete (no space after it), don't suggest
       // We want to suggest complete words/phrases, not mid-word completions
       if (lastWord.length > 0 && beforeCursor[beforeCursor.length - 1]?.match(/\w/)) {
@@ -241,7 +242,7 @@ export class AutocompleteEngine {
       const matchingHistory = this.userHistory
         .filter(prompt => prompt.toLowerCase().startsWith(beforeCursor.toLowerCase()) && prompt.length > beforeCursor.length)
         .slice(0, 1)
-      
+
       matchingHistory.forEach(prompt => {
         suggestions.push({
           text: prompt,
@@ -310,7 +311,7 @@ export class AutocompleteEngine {
     const currentText = this.getText()
     const cursorPosition = this.getCursorPosition()
     const beforeCursor = currentText.substring(0, cursorPosition)
-    
+
     // Replace text with suggestion
     const newText = this.currentSuggestion.text + currentText.substring(cursorPosition)
     this.setText(newText)

@@ -76,14 +76,14 @@ export class TokenCounter {
 
     document.body.appendChild(shadowHost)
     this.updatePosition()
-    
+
     // Make draggable
     this.makeDraggable()
   }
 
   private makeDraggable(): void {
     if (!this.container) return
-    
+
     let isDragging = false
     let currentX = 0
     let currentY = 0
@@ -136,7 +136,7 @@ export class TokenCounter {
 
   private debouncedUpdate = debounce(() => {
     this.update()
-  }, 300) // 300ms debounce for token counting
+  }, 2000) // 2000ms debounce for token counting to significantly reduce load
 
   private async update(): Promise<void> {
     if (!this.shadowRoot) return
@@ -148,22 +148,38 @@ export class TokenCounter {
       return
     }
 
+    // Run token counting asynchronously to prevent blocking UI
     try {
-      const tokenCounts = await getAllTokenCounts(text)
-      const count = this.getTokenCountForModel(tokenCounts, this.model)
-      const cost = this.calculateCost(count.tokens, this.model)
-
-      this.currentCount = {
-        tokens: count.tokens,
-        cost,
-        model: this.model,
-        provider: count.provider,
+      // Use requestIdleCallback if available, otherwise setTimeout
+      const runAsync = (callback: () => void) => {
+        if ('requestIdleCallback' in window) {
+          requestIdleCallback(callback, { timeout: 1000 })
+        } else {
+          setTimeout(callback, 0)
+        }
       }
 
-      this.updateDisplay(count.tokens, cost, this.model)
-      this.updateColor(count.tokens)
+      runAsync(async () => {
+        try {
+          const tokenCounts = await getAllTokenCounts(text)
+          const count = this.getTokenCountForModel(tokenCounts, this.model)
+          const cost = this.calculateCost(count.tokens, this.model)
+
+          this.currentCount = {
+            tokens: count.tokens,
+            cost,
+            model: this.model,
+            provider: count.provider,
+          }
+
+          this.updateDisplay(count.tokens, cost, this.model)
+          this.updateColor(count.tokens)
+        } catch (error) {
+          console.error('[TokenCounter] Error updating:', error)
+        }
+      })
     } catch (error) {
-      console.error('[TokenCounter] Error updating:', error)
+      console.error('[TokenCounter] Error scheduling update:', error)
     }
   }
 
@@ -196,7 +212,7 @@ export class TokenCounter {
       // Try to determine provider from model name
       const provider = this.getProviderFromModel(model)
       const pricing = getModelPricing(provider, model) || getAveragePricing()
-      
+
       if (pricing) {
         return calculateCost(tokens, pricing, false)
       }

@@ -126,6 +126,14 @@ export function showModelDownloadPrompt(): Promise<boolean> {
  * Show download progress
  */
 export function showDownloadProgress(progress: DownloadProgress): void {
+  // Ensure document.body exists
+  if (!document.body) {
+    console.warn('[PromptPrune] Cannot show progress - document.body not ready')
+    // Try again after a short delay
+    setTimeout(() => showDownloadProgress(progress), 500)
+    return
+  }
+  
   let progressBar = document.getElementById('promptprune-progress-bar')
   
   if (!progressBar) {
@@ -144,7 +152,11 @@ export function showDownloadProgress(progress: DownloadProgress): void {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     `
     document.body.appendChild(progressBar)
+    console.log('[PromptPrune] 📊 Progress bar created and shown')
   }
+  
+  // Store progress in dataset for tracking
+  progressBar.dataset.progress = String(progress.progress)
   
   if (progress.status === 'ready') {
     progressBar.innerHTML = `

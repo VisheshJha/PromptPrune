@@ -7,7 +7,7 @@
 // MUST import transformers config FIRST before importing transformers
 import './transformers-config'
 
-import { pipeline, Pipeline, env } from '@xenova/transformers'
+import { pipeline, env } from '@xenova/transformers'
 
 export interface EnhancedIntent {
   action: string
@@ -36,28 +36,27 @@ export interface EnhancedIntent {
 }
 
 class HFIntentExtractor {
-  private classifier: Pipeline | null = null
-  private embedder: Pipeline | null = null
-  private ner: Pipeline | null = null
+  private classifier: any = null
+  private embedder: any = null
+  private ner: any = null
   private initialized = false
+  private initFailed = false // Track if init has already failed
   private initPromise: Promise<void> | null = null
 
   /**
    * Initialize models (lazy loading - only when needed)
    */
   async initialize(): Promise<void> {
+    // Return immediately if already initialized or failed
     if (this.initialized) return
+    if (this.initFailed) return // Fast exit on known failure
     if (this.initPromise) return this.initPromise
 
     this.initPromise = (async () => {
       try {
-        console.log('[HFIntentExtractor] 🚀 Starting model initialization...')
-        console.log('[HFIntentExtractor] Loading models: Xenova/mobilebert-uncased-mnli, Xenova/all-MiniLM-L6-v2')
-        console.log('[HFIntentExtractor] Make sure https://huggingface.co/* is in manifest host_permissions!')
-        
         // Use lightweight models optimized for browser
         // Zero-shot classification for intent
-        let classifierError: any = null
+        let classifierError: unknown = null
         try {
           this.classifier = await Promise.race([
             pipeline(
@@ -67,22 +66,19 @@ class HFIntentExtractor {
             ),
             new Promise((_, reject) => setTimeout(() => reject(new Error("Model load timeout after 15s")), 15000))
           ]) as Pipeline
-          console.log('[HFIntentExtractor] ✅ Classifier model loaded successfully')
-        } catch (error: any) {
+        } catch (error: unknown) {
           classifierError = error
-          console.error('[HFIntentExtractor] ❌ Classifier model failed to load:', error.message)
-          if (error.message?.includes('<!DOCTYPE') || error.message?.includes('Unexpected token')) {
-            console.error('[HFIntentExtractor] This error usually means:')
-            console.error('  1. ⚠️  MANIFEST PERMISSION MISSING: https://huggingface.co/* must be in host_permissions!')
-            console.error('  2. Model does not exist on HuggingFace')
-            console.error('  3. Network/CORS issue - check browser console for CORS errors')
-            console.error('[HFIntentExtractor] 🔧 FIX: Add "https://huggingface.co/*" to manifest host_permissions and reload extension')
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          // Only log if it's a real error (not expected fallback)
+          if (errorMessage.includes('<!DOCTYPE') || errorMessage.includes('Unexpected token') || errorMessage.includes('CORS')) {
+            console.error('[HFIntentExtractor] ❌ Classifier model failed:', errorMessage)
+            console.error('[HFIntentExtractor] 💡 Add "https://huggingface.co/*" to manifest host_permissions if missing')
           }
           throw error // Re-throw to prevent continuing
         }
 
         // Text embeddings for semantic similarity
-        let embedderError: any = null
+        let embedderError: unknown = null
         try {
           this.embedder = await Promise.race([
             pipeline(
@@ -92,16 +88,13 @@ class HFIntentExtractor {
             ),
             new Promise((_, reject) => setTimeout(() => reject(new Error("Model load timeout after 15s")), 15000))
           ]) as Pipeline
-          console.log('[HFIntentExtractor] ✅ Embedder model loaded successfully')
-        } catch (error: any) {
+        } catch (error: unknown) {
           embedderError = error
-          console.error('[HFIntentExtractor] ❌ Embedder model failed to load:', error.message)
-          if (error.message?.includes('<!DOCTYPE') || error.message?.includes('Unexpected token')) {
-            console.error('[HFIntentExtractor] This error usually means:')
-            console.error('  1. ⚠️  MANIFEST PERMISSION MISSING: https://huggingface.co/* must be in host_permissions!')
-            console.error('  2. Model does not exist on HuggingFace')
-            console.error('  3. Network/CORS issue - check browser console for CORS errors')
-            console.error('[HFIntentExtractor] 🔧 FIX: Add "https://huggingface.co/*" to manifest host_permissions and reload extension')
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          // Only log if it's a real error (not expected fallback)
+          if (errorMessage.includes('<!DOCTYPE') || errorMessage.includes('Unexpected token') || errorMessage.includes('CORS')) {
+            console.error('[HFIntentExtractor] ❌ Embedder model failed:', errorMessage)
+            console.error('[HFIntentExtractor] 💡 Add "https://huggingface.co/*" to manifest host_permissions if missing')
           }
           // Clean up classifier if embedder fails
           this.classifier = null
@@ -112,28 +105,37 @@ class HFIntentExtractor {
         // We'll load this only when needed to save initial load time
 
         this.initialized = true
-        console.log('[HFIntentExtractor] ✅ All models initialized successfully')
       } catch (error) {
-        console.error('[HFIntentExtractor] ❌ Model initialization failed!')
-        console.error('[HFIntentExtractor] Error details:', error)
-        if (error instanceof Error) {
-          console.error('[HFIntentExtractor] Error message:', error.message)
-          console.error('[HFIntentExtractor] Error stack:', error.stack)
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        // Only log if it's a real error (not expected fallback)
+        if (errorMessage.includes('<!DOCTYPE') || errorMessage.includes('Unexpected token') || errorMessage.includes('CORS')) {
+          console.error('[HFIntentExtractor] ❌ Model initialization failed:', errorMessage)
+          console.error('[HFIntentExtractor] 💡 Add "https://huggingface.co/*" to manifest host_permissions if missing')
         }
-        console.error('[HFIntentExtractor] Possible causes:')
-        console.error('  1. ⚠️  MANIFEST PERMISSION MISSING: https://huggingface.co/* must be in host_permissions!')
-        console.error('  2. Models do not exist on HuggingFace')
-        console.error('  3. Network/CORS issue - check browser console for CORS errors')
-        console.error('  4. Browser compatibility issue')
-        console.error('[HFIntentExtractor] Extension will use fallback methods (keyword-based)')
+        // Extension will use fallback methods (keyword-based)
         // Fallback: continue without HF models
         this.initialized = false
+        this.initFailed = true // Mark as failed so we don't retry
         this.classifier = null
         this.embedder = null
       }
     })()
 
     return this.initPromise
+  }
+
+  /**
+   * Check if models are ready (without triggering initialization)
+   */
+  isReady(): boolean {
+    return this.initialized && this.classifier !== null && this.embedder !== null
+  }
+
+  /**
+   * Check if initialization has failed (to skip future attempts)
+   */
+  hasFailed(): boolean {
+    return this.initFailed
   }
 
   /**
@@ -286,7 +288,7 @@ class HFIntentExtractor {
     sentences.forEach(sentence => {
       if (sentence.match(/\b(write|create|include|add|cover|discuss|explain|analyze|research|study|examine)\b/i)) {
         // Check if it's not already captured
-        const isDuplicate = subTasks.some(st => 
+        const isDuplicate = subTasks.some(st =>
           st.toLowerCase().includes(sentence.toLowerCase().substring(0, 20)) ||
           sentence.toLowerCase().includes(st.toLowerCase().substring(0, 20))
         )
@@ -371,9 +373,9 @@ class HFIntentExtractor {
     entities: Array<{ text: string; label: string; score: number }>
   ): string {
     // Look for action verbs in entities
-    const actionEntities = entities.filter(e => 
-      e.label === 'VERB' || 
-      ['write', 'create', 'make', 'generate', 'analyze', 'explain'].some(verb => 
+    const actionEntities = entities.filter(e =>
+      e.label === 'VERB' ||
+      ['write', 'create', 'make', 'generate', 'analyze', 'explain'].some(verb =>
         e.text.toLowerCase().includes(verb)
       )
     )
@@ -404,8 +406,8 @@ class HFIntentExtractor {
     }
 
     // If fallback topic is generic, try to extract from prompt
-    if (fallbackTopic.toLowerCase().includes('specified topic') || 
-        fallbackTopic.toLowerCase().includes('[subject]')) {
+    if (fallbackTopic.toLowerCase().includes('specified topic') ||
+      fallbackTopic.toLowerCase().includes('[subject]')) {
       // Try to find topic after "about", "on", "regarding"
       const topicMatch = prompt.match(/(?:about|on|regarding|concerning)\s+([^.,!?\n]+?)(?:\s+(?:for|to|with|and|or|,|\.|$)|$)/i)
       if (topicMatch && topicMatch[1]) {

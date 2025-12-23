@@ -66,9 +66,12 @@ export class SmartSuggestions {
   }
 
   private attachListeners(): void {
-    this.textarea.addEventListener('input', () => {
-      this.debouncedUpdate()
+    // Only update on blur to prevent typing lag
+    // User requested only regex on typing
+    this.textarea.addEventListener('blur', () => {
+      this.update()
     })
+
 
     window.addEventListener('scroll', () => this.updatePosition(), true)
     window.addEventListener('resize', () => this.updatePosition())

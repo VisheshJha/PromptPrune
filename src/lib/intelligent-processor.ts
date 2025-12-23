@@ -68,17 +68,6 @@ function levenshteinDistance(str1: string, str2: string): number {
 }
 
 /**
- * Find the closest word from dictionary using Levenshtein distance
- * NOTE: This function is deprecated - we only use the misspellings dictionary now
- * to avoid over-correction. Levenshtein distance was too aggressive.
- */
-function findClosestWord(_word: string, _maxDistance: number = 2): string | null {
-  // This function is kept for backwards compatibility but should not be used
-  // as it's too aggressive and replaces valid words
-  return null
-}
-
-/**
  * Intelligent spell checking with context awareness
  */
 export function intelligentSpellCheck(text: string): {

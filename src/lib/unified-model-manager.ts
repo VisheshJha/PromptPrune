@@ -1,15 +1,8 @@
 /**
  * Unified Model Manager
- * Uses Transformers.js for all ML tasks (replaces ONNX Runtime)
- * 3 lightweight quantized models: classifier, embedder, fill-mask
- * Total size: ~80MB (down from 250MB+)
- * 
- * Uses Transformers.js for browser inference
+ * Uses shared models in background service worker (downloaded once, shared across all platforms)
+ * Routes all ML inference through message passing to background service worker
  */
-
-import { getTransformersModelManager, smartAnalysis } from './browser-inference-transformers'
-import { getModelWorkerManager } from './model-worker-manager'
-
 
 export interface UnifiedModelStatus {
   model: boolean
@@ -41,15 +34,10 @@ export interface IntentClassificationResult {
 }
 
 class UnifiedModelManager {
-  private transformersManager = getTransformersModelManager()
   private modelReady = false
   private initPromise: Promise<void> | null = null
-  private initStartTime: number | null = null // Track when initialization started
-  // Using Transformers.js with 3 quantized models
-  // Models: distilbert-sst-2 (classifier), all-MiniLM-L6-v2 (embedder), distilbert-base (fill-mask)
-  private readonly MODEL_DESCRIPTION = 'Transformers.js (3 models, ~80MB total)'
-  private useWorker: boolean = false // Disabled due to CSP/loading issues - use direct inference
-  private workerManager = getModelWorkerManager()
+  // Using shared models in background service worker (downloaded once, ~53MB total)
+  private readonly MODEL_DESCRIPTION = 'Shared Models (Background Service Worker, ~53MB total)'
 
   // Framework labels (8 frameworks)
   private readonly FRAMEWORKS = [
@@ -76,77 +64,60 @@ class UnifiedModelManager {
   ]
 
   /**
-   * Initialize unified model (lazy loading)
+   * Initialize unified model (checks shared models in background service worker)
    */
   async initialize(): Promise<void> {
     if (this.modelReady) {
       return
     }
 
-    // If promise exists, check if it's stuck
     if (this.initPromise) {
-
-      // If initStartTime is null, the promise was created but never started executing (stuck)
-      // Or if it's been more than 40 seconds, it's definitely stuck
-      const now = Date.now()
-      const isStuck = this.initStartTime === null ||
-        (this.initStartTime && (now - this.initStartTime) > 40000)
-
-      if (isStuck) {
-        this.initPromise = null
-        this.initStartTime = null
-        // Fall through to create new promise
-      } else {
-        // Promise is still valid, wait for it
-        try {
-          await this.initPromise
-        } catch (error) {
-          console.error('[UnifiedModelManager] Error waiting for initialization:', error)
-          this.initPromise = null
-          this.initStartTime = null
-        }
-
-        if (this.modelReady) {
-          return
-        }
-
-        // If still not ready after waiting, reset and retry
-        this.initPromise = null
-        this.initStartTime = null
-        // Fall through to create new promise
-      }
+      await this.initPromise
+      return
     }
-
-
-    // Mark when initialization starts
-    this.initStartTime = Date.now()
 
     this.initPromise = (async () => {
       try {
+        // Check if shared models are ready in background service worker
+        const ready = await new Promise<boolean>((resolve) => {
+          if (typeof chrome !== 'undefined' && chrome.runtime) {
+            chrome.runtime.sendMessage({ type: 'CHECK_MODELS_READY' }, (response) => {
+              if (chrome.runtime.lastError) {
+                resolve(false)
+              } else {
+                resolve(response?.ready === true)
+              }
+            })
+          } else {
+            resolve(false)
+          }
+        })
 
-        // Initialize Transformers.js model manager
-        await this.transformersManager.initialize()
+        if (!ready) {
+          // Request model initialization in background
+          await new Promise<void>((resolve, reject) => {
+            if (typeof chrome !== 'undefined' && chrome.runtime) {
+              chrome.runtime.sendMessage({ type: 'INIT_MODELS' }, (response) => {
+                if (chrome.runtime.lastError) {
+                  reject(new Error(chrome.runtime.lastError.message))
+                } else if (response?.success) {
+                  resolve()
+                } else {
+                  reject(new Error(response?.error || 'Model initialization failed'))
+                }
+              })
+            } else {
+              reject(new Error('Chrome runtime not available'))
+            }
+          })
+        }
 
         this.modelReady = true
-        localStorage.setItem('promptprune-unified-model-downloaded', 'true')
       } catch (error) {
-        console.error('[UnifiedModelManager] Model initialization failed:', error instanceof Error ? error.message : error)
-
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        console.error('[UnifiedModelManager] Shared model check failed:', errorMessage)
         this.modelReady = false
-
-        // Clear the promise so it can be retried
         this.initPromise = null
-        this.initStartTime = null
-
-        // Clear cache flag since initialization failed
-        localStorage.removeItem('promptprune-unified-model-downloaded')
-
-        // Don't throw - allow fallback mechanisms to work
-        // The extension will work without the model using regex/keyword-based methods
-        return
-      } finally {
-        // Always clear start time when done (success or failure)
-        this.initStartTime = null
       }
     })()
 
@@ -154,14 +125,12 @@ class UnifiedModelManager {
   }
 
   /**
-   * Spell check using unified model
-   * Note: For token-level classification, we'll use a workaround with sequence classification
+   * Spell check using shared models
    */
   async spellCheck(text: string): Promise<SpellCheckResult> {
     await this.initialize()
 
-    if (!this.modelReady || !this.transformersManager.isReady()) {
-      console.debug('[UnifiedModelManager] Model not available, spell check will use fallback')
+    if (!this.modelReady) {
       return {
         corrected: text,
         corrections: []
@@ -169,7 +138,7 @@ class UnifiedModelManager {
     }
 
     try {
-      const result = await this.transformersManager.smartAnalysis(text)
+      const result = await this.requestSmartAnalysis(text)
       return result.spellCheck
     } catch (error) {
       console.error('[UnifiedModelManager] Spell check failed:', error)
@@ -181,18 +150,17 @@ class UnifiedModelManager {
   }
 
   /**
-   * Match framework using unified model
+   * Match framework using shared models
    */
   async matchFramework(text: string): Promise<FrameworkMatchResult> {
     await this.initialize()
 
-    if (!this.modelReady || !this.transformersManager.isReady()) {
-      console.debug('[UnifiedModelManager] Model not available, using fallback framework matching')
+    if (!this.modelReady) {
       return this.getFallbackFrameworkMatch(text)
     }
 
     try {
-      const result = await this.transformersManager.smartAnalysis(text)
+      const result = await this.requestSmartAnalysis(text)
       return result.framework
     } catch (error) {
       console.error('[UnifiedModelManager] Framework matching failed:', error)
@@ -201,14 +169,12 @@ class UnifiedModelManager {
   }
 
   /**
-   * Detect sensitive content using unified model
-   * Uses Web Worker if enabled, otherwise direct inference
+   * Detect sensitive content using shared models
    */
   async detectSensitive(text: string): Promise<SensitiveDetectionResult> {
     await this.initialize()
 
-    if (!this.modelReady || !this.transformersManager.isReady()) {
-      console.warn('[UnifiedModelManager] ⚠️ Model not available, using fallback sensitive detection')
+    if (!this.modelReady) {
       return {
         isSensitive: false,
         confidence: 0.5
@@ -216,10 +182,11 @@ class UnifiedModelManager {
     }
 
     try {
-      const result = await this.transformersManager.smartAnalysis(text)
+      const result = await this.requestSmartAnalysis(text)
       return result.sensitive
     } catch (error) {
-      console.error('[UnifiedModelManager] ❌ Sensitive detection failed:', error)
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      console.error('[UnifiedModelManager] ❌ Sensitive detection runtime error:', errorMessage)
       return {
         isSensitive: false,
         confidence: 0.5
@@ -228,14 +195,12 @@ class UnifiedModelManager {
   }
 
   /**
-   * Classify intent using unified model
-   * Uses Web Worker if enabled, otherwise direct inference
+   * Classify intent using shared models
    */
   async classifyIntent(text: string): Promise<IntentClassificationResult> {
     await this.initialize()
 
-    if (!this.modelReady || !this.transformersManager.isReady()) {
-      console.debug('[UnifiedModelManager] Model not available, using fallback intent classification')
+    if (!this.modelReady) {
       return {
         intent: 'general',
         confidence: 0.5,
@@ -244,7 +209,7 @@ class UnifiedModelManager {
     }
 
     try {
-      const result = await this.transformersManager.smartAnalysis(text)
+      const result = await this.requestSmartAnalysis(text)
       return result.intent
     } catch (error) {
       console.error('[UnifiedModelManager] Intent classification failed:', error)
@@ -257,6 +222,44 @@ class UnifiedModelManager {
   }
 
   /**
+   * Request smart analysis from background service worker (shared models)
+   * With timeout to prevent UI freezing
+   */
+  private async requestSmartAnalysis(text: string): Promise<{
+    spellCheck: SpellCheckResult
+    sensitive: SensitiveDetectionResult
+    framework: FrameworkMatchResult
+    intent: IntentClassificationResult
+  }> {
+    return new Promise((resolve, reject) => {
+      if (typeof chrome === 'undefined' || !chrome.runtime) {
+        reject(new Error('Chrome runtime not available'))
+        return
+      }
+
+      // Add timeout to prevent hanging (3 seconds max for inference)
+      const timeout = setTimeout(() => {
+        reject(new Error('Inference timeout - using fallback'))
+      }, 3000)
+
+      chrome.runtime.sendMessage(
+        { type: 'SMART_ANALYSIS', text },
+        (response) => {
+          clearTimeout(timeout)
+          
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message))
+          } else if (response?.success) {
+            resolve(response.result)
+          } else {
+            reject(new Error(response?.error || 'Analysis failed'))
+          }
+        }
+      )
+    })
+  }
+
+  /**
    * Get model status
    */
   getStatus(): UnifiedModelStatus {
@@ -265,20 +268,6 @@ class UnifiedModelManager {
       totalSize: '~30-50MB',
       estimatedRAM: '~200MB'
     }
-  }
-
-  /**
-   * Enable/disable Web Worker usage
-   */
-  setUseWorker(useWorker: boolean): void {
-    this.useWorker = useWorker
-  }
-
-  /**
-   * Check if Web Worker is enabled
-   */
-  isWorkerEnabled(): boolean {
-    return this.useWorker
   }
 
   /**
@@ -326,15 +315,7 @@ class UnifiedModelManager {
    * Check if model is ready
    */
   isReady(): boolean {
-    const ready = this.modelReady && this.transformersManager.isReady()
-    if (!ready) {
-      console.log('[UnifiedModelManager] Model status check:', {
-        modelReady: this.modelReady,
-        transformersReady: this.transformersManager.isReady(),
-        initPromiseExists: this.initPromise !== null
-      })
-    }
-    return ready
+    return this.modelReady
   }
 
   /**
@@ -347,8 +328,8 @@ class UnifiedModelManager {
     modelId: string
   } {
     return {
-      ready: this.modelReady && this.transformersManager.isReady(),
-      modelExists: this.transformersManager.isReady(),
+      ready: this.modelReady,
+      modelExists: this.modelReady,
       initPromiseExists: this.initPromise !== null,
       modelId: this.MODEL_DESCRIPTION
     }
@@ -360,10 +341,7 @@ class UnifiedModelManager {
   resetInitialization(): void {
     console.warn('[UnifiedModelManager] 🔄 Force resetting initialization...')
     this.initPromise = null
-    this.initStartTime = null
     this.modelReady = false
-    localStorage.removeItem('promptprune-unified-model-downloaded')
-    console.log('[UnifiedModelManager] Initialization reset complete')
   }
 
   /**
@@ -372,112 +350,22 @@ class UnifiedModelManager {
   async forceRetryInitialization(): Promise<void> {
     console.warn('[UnifiedModelManager] 🔄 Force retrying initialization...')
     this.resetInitialization()
-    console.log('[UnifiedModelManager] Starting forced initialization...')
     await this.initialize()
-    console.log('[UnifiedModelManager] Forced initialization complete. Status:', this.getModelStatus())
   }
 
   /**
-   * Check if model is cached
+   * Check if shared models are cached (in background service worker)
    */
   async isCached(): Promise<boolean> {
-    try {
-      // First check localStorage flag (fastest)
-      const modelsDownloaded = localStorage.getItem('promptprune-unified-model-downloaded')
-      if (modelsDownloaded === 'true') {
-        console.log('[UnifiedModelManager] Model cache flag found in localStorage')
-        return true
+    return new Promise((resolve) => {
+      if (typeof chrome !== 'undefined' && chrome.storage) {
+        chrome.storage.local.get(['promptprune-models-ready'], (result) => {
+          resolve(result['promptprune-models-ready'] === true)
+        })
+      } else {
+        resolve(false)
       }
-
-      // Check IndexedDB for cached model (transformers.js stores models here)
-      const dbName = 'transformers-cache'
-      return new Promise((resolve) => {
-        try {
-          const request = indexedDB.open(dbName)
-
-          request.onsuccess = () => {
-            try {
-              const db = request.result
-              if (!db) {
-                console.log('[UnifiedModelManager] IndexedDB not available')
-                resolve(false)
-                return
-              }
-
-              // Check if we have object stores (indicating models were cached)
-              const hasStores = db.objectStoreNames.length > 0
-
-              // Also check for our specific model in the stores
-              let hasModel = false
-              if (hasStores) {
-                // Check if model files exist in any store
-                const storeNames = Array.from(db.objectStoreNames)
-                for (const storeName of storeNames) {
-                  const transaction = db.transaction(storeName, 'readonly')
-                  const store = transaction.objectStore(storeName)
-                  const countRequest = store.count()
-
-                  countRequest.onsuccess = () => {
-                    if (countRequest.result > 0) {
-                      hasModel = true
-                      // Set flag for future checks
-                      localStorage.setItem('promptprune-unified-model-downloaded', 'true')
-                      console.log('[UnifiedModelManager] Model found in IndexedDB, setting cache flag')
-                      db.close()
-                      resolve(true)
-                    } else {
-                      db.close()
-                      resolve(false)
-                    }
-                  }
-
-                  countRequest.onerror = () => {
-                    db.close()
-                    resolve(hasStores) // Fallback to store existence check
-                  }
-
-                  return // Check first store only
-                }
-              } else {
-                db.close()
-                resolve(false)
-              }
-
-              // If no stores or check failed, close and return
-              if (!hasModel && hasStores) {
-                db.close()
-                resolve(false)
-              }
-            } catch (e) {
-              console.warn('[UnifiedModelManager] Error checking IndexedDB:', e)
-              resolve(false)
-            }
-          }
-
-          request.onerror = () => {
-            console.log('[UnifiedModelManager] IndexedDB open failed')
-            resolve(false)
-          }
-
-          request.onblocked = () => {
-            console.log('[UnifiedModelManager] IndexedDB blocked')
-            resolve(false)
-          }
-
-          request.onupgradeneeded = () => {
-            // Database doesn't exist yet or needs upgrade
-            console.log('[UnifiedModelManager] IndexedDB needs upgrade, no cache')
-            resolve(false)
-          }
-        } catch (error) {
-          console.warn('[UnifiedModelManager] IndexedDB check error:', error)
-          resolve(false)
-        }
-      })
-    } catch (error) {
-      console.warn('[UnifiedModelManager] Error checking cache:', error)
-      return false
-    }
+    })
   }
 }
 
@@ -493,4 +381,3 @@ export function getUnifiedModelManager(): UnifiedModelManager {
   }
   return unifiedModelManagerInstance
 }
-

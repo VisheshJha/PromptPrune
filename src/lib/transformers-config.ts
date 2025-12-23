@@ -24,19 +24,9 @@ if (typeof window !== 'undefined') {
   env.allowLocalModels = false
 }
 
-// Log the configuration to verify it's set correctly
-console.log('[TransformersConfig] ✅ Environment configured (based on HuggingFace browser example):', {
-  remoteURLTemplate: env.remoteURLTemplate,
-  remotePath: env.remotePath,
-  allowLocalModels: env.allowLocalModels,
-  useBrowserCache: env.useBrowserCache
-})
-
 // Verify the configuration is correct
 if (env.remoteURLTemplate && !env.remoteURLTemplate.includes('resolve/main')) {
   console.error('[TransformersConfig] ❌ WARNING: remoteURLTemplate does not use resolve/main!')
   console.error('[TransformersConfig] Current template:', env.remoteURLTemplate)
   console.error('[TransformersConfig] This will cause HTML responses instead of raw files!')
 }
-
-

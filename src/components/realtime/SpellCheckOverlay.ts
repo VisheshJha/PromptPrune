@@ -103,7 +103,8 @@ export class SpellCheckOverlay {
   }
 
   private attachListeners(): void {
-    this.textarea.addEventListener('input', this.debouncedUpdate)
+    // Only update on blur to prevent typing lag
+    this.textarea.addEventListener('blur', this.update.bind(this))
 
     this.textarea.addEventListener('scroll', () => {
       this.updateSquiggles()
@@ -288,13 +289,13 @@ export class SpellCheckOverlay {
         transition: all var(--transition-fast, 150ms);
       `
       suggestionBtn.addEventListener('mouseenter', () => {
-        suggestionBtn.style.background = index === 0 
-          ? 'var(--color-primary-600, #059669)' 
+        suggestionBtn.style.background = index === 0
+          ? 'var(--color-primary-600, #059669)'
           : 'var(--color-gray-200, #e5e7eb)'
       })
       suggestionBtn.addEventListener('mouseleave', () => {
-        suggestionBtn.style.background = index === 0 
-          ? 'var(--color-primary-500, #10b981)' 
+        suggestionBtn.style.background = index === 0
+          ? 'var(--color-primary-500, #10b981)'
           : 'var(--color-gray-100, #f3f4f6)'
       })
       suggestionBtn.addEventListener('click', () => {

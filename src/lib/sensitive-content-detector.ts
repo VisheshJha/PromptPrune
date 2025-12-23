@@ -7,53 +7,38 @@ export interface SensitiveContentResult {
   hasSensitiveContent: boolean
   detectedItems: Array<{
     type: string
-    value: string
+    value: string // Masked value for display
+    originalValue: string // Original value for redaction/masking logic
     severity: 'low' | 'medium' | 'high'
     position: number
     suggestion: string
   }>
+
   riskScore: number // 0-100
   shouldBlock: boolean
+  classifications?: string[]
 }
 
+
 // Detection patterns - comprehensive coverage of sensitive data formats
-// IMPORTANT: Order matters - check Aadhaar before phone to avoid conflicts
 const DETECTION_PATTERNS = {
   email: {
-    pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
+    pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/gi,
     severity: 'medium' as const,
     suggestion: '⚠️ Email address detected - Consider removing'
   },
-  // Check Aadhaar patterns BEFORE phone to avoid 12-digit numbers being detected as phone
-  aadhaar: {
-    pattern: /\b(?:aadhaar|aadhar|uidai)\s*(?:number|no|#|id)?\s*[:=]?\s*\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/gi,
-    severity: 'high' as const,
-    suggestion: '🚨 Aadhaar number detected - DO NOT SHARE - Critical identity theft risk (India)'
-  },
-  aadhaarStandalone: {
-    // Standalone Aadhaar pattern - matches 12-digit numbers in Aadhaar format (with or without spaces/dashes)
-    // Format: XXXX XXXX XXXX or XXXX-XXXX-XXXX or XXXXXXXXXXXX
-    pattern: /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g,
-    severity: 'high' as const,
-    suggestion: '🚨 Aadhaar number detected - DO NOT SHARE - Critical identity theft risk (India)'
-  },
+
   phone: {
-    // Enhanced phone pattern - handles all formats:
-    // US: (123) 456-7890, 123-456-7890, 123.456.7890, 1234567890, +1-123-456-7890
-    // International: +91-9876543210, +44 20 1234 5678, etc.
-    // Made more strict to avoid false positives like "100 words"
-    pattern: /\b(?:\+?\d{1,4}[-.\s]?)?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}\b/g,
+    pattern: /\b(?:\+?1[-.\s]?)?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4}\b/g,
     severity: 'medium' as const,
     suggestion: '⚠️ Phone number detected - Consider removing'
   },
   ssn: {
-    // SSN formats: 123-45-6789, 123 45 6789, 123456789
-    pattern: /\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b/g,
+    pattern: /\b\d{3}-?\d{2}-?\d{4}\b/g,
     severity: 'high' as const,
     suggestion: '🚨 SSN detected - DO NOT SHARE - This is highly sensitive'
   },
   creditCard: {
-    // Credit card formats: 4532-1234-5678-9010, 4532 1234 5678 9010, 4532123456789010
     pattern: /\b(?:\d{4}[-\s]?){3}\d{4}\b/g,
     severity: 'high' as const,
     suggestion: '🚨 Credit card number detected - DO NOT SHARE - Financial data leak risk'
@@ -78,25 +63,44 @@ const DETECTION_PATTERNS = {
     severity: 'low' as const,
     suggestion: '⚠️ IP address detected - Consider removing if internal/private'
   },
+  localhost: {
+    pattern: /\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0|::1|.+\.local|.+\.test|.+\.example|.+\.internal)\b/gi,
+    severity: 'low' as const,
+    suggestion: '⚠️ Internal domain/localhost detected - Data leak risk'
+  },
   apiKey: {
-    // Enhanced pattern to catch:
-    // - Stripe: sk_test_, sk_live_, pk_test_, pk_live_, rk_test_, rk_live_
-    // - OpenAI: sk-
-    // - Google: AIza
-    // - GitHub: ghp_, gho_, ghu_, ghs_, github_pat_
-    // - Slack: xoxb-, xoxa-, xoxp-, xoxe-, xoxs-, xoxr-
-    // - Generic: api_key=, apikey=, api-key=, Bearer tokens
-    pattern: /\b(?:sk_(?:test|live)_[A-Za-z0-9]{24,}|pk_(?:test|live)_[A-Za-z0-9]{24,}|rk_(?:test|live)_[A-Za-z0-9]{24,}|sk-[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{35,}|ghp_[A-Za-z0-9]{36,}|gho_[A-Za-z0-9]{36,}|ghu_[A-Za-z0-9]{36,}|ghs_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{82,}|xoxb-[A-Za-z0-9-]{50,}|xoxa-[A-Za-z0-9-]{50,}|xoxp-[A-Za-z0-9-]{50,}|xoxe-[A-Za-z0-9-]{50,}|xoxs-[A-Za-z0-9-]{50,}|xoxr-[A-Za-z0-9-]{50,}|Bearer\s+[A-Za-z0-9_-]{20,}|(?:api[_-]?key|apikey|api-key)\s*[:=]\s*['"]?[A-Za-z0-9_-]{20,}['"]?)\b/gi,
+    pattern: /\b(?:sk-|pk_|sk_live_|pk_live_|AIza|ghp_|gho_|ghu_|ghs_|xoxb-|xoxa-|xoxp-|xoxe-|xoxs-|xoxr-|Bearer\s+[A-Za-z0-9]{20,}|api[_-]?key\s*[:=]\s*['"]?[A-Za-z0-9]{20,}['"]?)\b/gi,
     severity: 'high' as const,
     suggestion: '🚨 API key/token detected - NEVER SHARE - Security breach risk'
   },
+  slackToken: {
+    pattern: /\bxox[baprs]-[0-9a-zA-Z]{10,48}\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 Slack token detected - NEVER SHARE - Communication breach risk'
+  },
+  stripeKey: {
+    pattern: /\b(?:sk|pk)_(?:test|live)_[0-9a-zA-Z]{24,}\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 Stripe API key detected - NEVER SHARE - Financial data leak risk'
+  },
+  githubToken: {
+    pattern: /\bgh[pous]_[a-zA-Z0-9]{36,}\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 GitHub token detected - NEVER SHARE - Source code breach risk'
+  },
+  sshKey: {
+    pattern: /\bssh-(?:rsa|dss|ed25519|ecdsa-sha2-nistp256)\s+[A-Za-z0-9+/=]{20,}\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 SSH Public Key detected - Remove if shared with unknown parties'
+  },
+
   password: {
     pattern: /(?:password|pwd|pass|secret[_-]?key|private[_-]?key)\s*[:=]\s*['"]?[^\s'"]{8,}['"]?/gi,
     severity: 'high' as const,
     suggestion: '🚨 Password/secret key detected - DO NOT SHARE - Security breach risk'
   },
   jwt: {
-    pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+    pattern: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/gi,
     severity: 'high' as const,
     suggestion: '🚨 JWT token detected - NEVER SHARE - Authentication token leak risk'
   },
@@ -131,7 +135,7 @@ const DETECTION_PATTERNS = {
     suggestion: '🚨 Windows activation key detected - DO NOT SHARE - Software license violation risk'
   },
   productKey: {
-    pattern: /\b([A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5})\b/g,
+    pattern: /\b([A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5})\b/gi,
     severity: 'high' as const,
     suggestion: '🚨 Product/activation key detected - DO NOT SHARE - Software license violation risk'
   },
@@ -140,29 +144,25 @@ const DETECTION_PATTERNS = {
     severity: 'high' as const,
     suggestion: '🚨 Tax ID/EIN detected - DO NOT SHARE - Business identity theft risk'
   },
-  // India-specific identifiers - CHECK BEFORE PHONE to avoid conflicts
+  panStandalone: {
+    pattern: /\b[A-Z]{5}\d{4}[A-Z]\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 PAN card number detected - DO NOT SHARE - Tax identity theft risk (India)'
+  },
+  aadhaarStandalone: {
+    pattern: /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g,
+    severity: 'high' as const,
+    suggestion: '🚨 Aadhaar number detected - DO NOT SHARE - Critical identity theft risk (India)'
+  },
+
+  // India-specific identifiers
   aadhaar: {
     pattern: /\b(?:aadhaar|aadhar|uidai)\s*(?:number|no|#|id)?\s*[:=]?\s*\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/gi,
     severity: 'high' as const,
     suggestion: '🚨 Aadhaar number detected - DO NOT SHARE - Critical identity theft risk (India)'
   },
-  aadhaarStandalone: {
-    // Standalone Aadhaar pattern - matches 12-digit numbers in Aadhaar format (with or without spaces/dashes)
-    // Format: XXXX XXXX XXXX or XXXX-XXXX-XXXX or XXXXXXXXXXXX
-    // IMPORTANT: This must be checked BEFORE phone pattern to avoid 12-digit numbers being detected as phone
-    pattern: /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g,
-    severity: 'high' as const,
-    suggestion: '🚨 Aadhaar number detected - DO NOT SHARE - Critical identity theft risk (India)'
-  },
   pan: {
-    pattern: /\b(?:pan|permanent\s+account\s+number|pan\s+card|pan\s+number)\s*[:=,\s"']*\s*[A-Z]{5}\d{4}[A-Z]\b/gi,
-    severity: 'high' as const,
-    suggestion: '🚨 PAN card number detected - DO NOT SHARE - Tax identity theft risk (India)'
-  },
-  panStandalone: {
-    // Standalone PAN pattern - matches PAN format without requiring "PAN" keyword
-    // Format: 5 letters (case-insensitive) + 4 digits + 1 letter (case-insensitive)
-    pattern: /\b[A-Za-z]{5}\d{4}[A-Za-z]\b/g,
+    pattern: /\b(?:pan|permanent\s+account\s+number|pan\s+card|pan\s+number)\s*[:=]?\s*[A-Z]{5}\d{4}[A-Z]\b/gi,
     severity: 'high' as const,
     suggestion: '🚨 PAN card number detected - DO NOT SHARE - Tax identity theft risk (India)'
   },
@@ -172,26 +172,12 @@ const DETECTION_PATTERNS = {
     suggestion: '🚨 Voter ID/EPIC number detected - DO NOT SHARE - Identity theft risk (India)'
   },
   ifsc: {
-    // IFSC with keyword
     pattern: /\b(?:ifsc|ifsc\s+code)\s*[:=]?\s*[A-Z]{4}0[A-Z0-9]{6}\b/gi,
     severity: 'high' as const,
     suggestion: '🚨 IFSC code detected - DO NOT SHARE - Bank account exposure risk (India)'
   },
-  ifscStandalone: {
-    // Standalone IFSC pattern - matches format without keyword
-    pattern: /\b[A-Z]{4}0[A-Z0-9]{6}\b/g,
-    severity: 'high' as const,
-    suggestion: '🚨 IFSC code detected - DO NOT SHARE - Bank account exposure risk (India)'
-  },
   upiId: {
-    // UPI ID with keyword
     pattern: /\b(?:upi|upi\s+id|upi\s+handle|vpa|virtual\s+payment\s+address)\s*[:=]?\s*[a-zA-Z0-9._-]+@(?:paytm|ybl|okaxis|axl|ibl|upi|phonepe|gpay|amazonpay)\b/gi,
-    severity: 'high' as const,
-    suggestion: '🚨 UPI ID detected - DO NOT SHARE - Financial fraud risk (India)'
-  },
-  upiIdStandalone: {
-    // Standalone UPI ID pattern - matches format without keyword
-    pattern: /\b[a-zA-Z0-9._-]+@(?:paytm|ybl|okaxis|axl|ibl|upi|phonepe|gpay|amazonpay)\b/gi,
     severity: 'high' as const,
     suggestion: '🚨 UPI ID detected - DO NOT SHARE - Financial fraud risk (India)'
   },
@@ -265,46 +251,38 @@ const SENSITIVE_KEYWORDS = [
   { keyword: 'internal memo', severity: 'high' as const, suggestion: '🚨 Internal memo context detected - Confidential communication leak risk' },
   { keyword: 'project horizon', severity: 'high' as const, suggestion: '🚨 Internal project name detected - Confidential project leak risk' },
   { keyword: 'ayushman bharat', severity: 'high' as const, suggestion: '🚨 Ayushman Bharat/medical claim context detected - HIPAA/medical data leak risk (India)' },
-  { keyword: 'hospital discharge', severity: 'high' as const, suggestion: '🚨 Hospital discharge summary detected - Medical record leak risk (India)' }
+  { keyword: 'hospital discharge', severity: 'high' as const, suggestion: '🚨 Hospital discharge summary detected - Medical record leak risk (India)' },
+  { keyword: '.env', severity: 'high' as const, suggestion: '🚨 Environment variable file context detected - Critical secret leak risk' },
+  { keyword: 'kubeconfig', severity: 'high' as const, suggestion: '🚨 Kubernetes config detected - Critical infrastructure breach risk' },
+  { keyword: 'ssh-keygen', severity: 'high' as const, suggestion: '🚨 SSH key generation context detected - Security breach risk' },
+  { keyword: 'hardcoded password', severity: 'high' as const, suggestion: '🚨 Hardcoded credentials detected - Security breach risk' },
+  { keyword: 'access_key_id', severity: 'high' as const, suggestion: '🚨 Cloud access key ID detected - Infrastructure breach risk' },
+  { keyword: 'secret_access_key', severity: 'high' as const, suggestion: '🚨 Cloud secret access key detected - Infrastructure breach risk' }
 ]
+
 
 export function detectSensitiveContent(text: string): SensitiveContentResult {
   const detectedItems: SensitiveContentResult['detectedItems'] = []
   let riskScore = 0
 
-  console.log('[SensitiveContentDetector] Checking text:', text.substring(0, 100))
-
   // Check each pattern
   for (const [type, config] of Object.entries(DETECTION_PATTERNS)) {
     // Reset regex lastIndex to avoid issues with global regex
     config.pattern.lastIndex = 0
-    const matches = Array.from(text.matchAll(config.pattern))
-
-    if (matches.length > 0 && (type === 'pan' || type.includes('pan'))) {
-      console.log(`[SensitiveContentDetector] PAN pattern matched ${matches.length} times:`, matches.map(m => ({ match: m[0], index: m.index })))
-    }
+    const matches = text.matchAll(config.pattern)
 
     for (const match of matches) {
-      const isValid = isValidMatch(type, match[0], text, match.index || 0)
-      if (type === 'pan' || type.includes('pan')) {
-        console.log(`[SensitiveContentDetector] PAN match validation:`, {
-          type,
-          match: match[0],
-          index: match.index,
-          isValid,
-          fullText: text.substring(Math.max(0, (match.index || 0) - 20), (match.index || 0) + 50)
-        })
-      }
-
       // Validate match (some patterns may have false positives)
-      if (isValid) {
+      if (isValidMatch(type, match[0], text, match.index || 0)) {
         detectedItems.push({
           type,
           value: maskSensitiveValue(type, match[0]),
+          originalValue: match[0],
           severity: config.severity,
           position: match.index || 0,
           suggestion: config.suggestion
         })
+
 
         // Calculate risk score
         if (config.severity === 'high') riskScore += 30
@@ -314,81 +292,31 @@ export function detectSensitiveContent(text: string): SensitiveContentResult {
     }
   }
 
-  // Check for sensitive keywords with context awareness
+  // Check for sensitive keywords
   const lowerText = text.toLowerCase()
   for (const config of SENSITIVE_KEYWORDS) {
     const keywordLower = config.keyword.toLowerCase()
-    const keywordIndex = lowerText.indexOf(keywordLower)
-    
-    if (keywordIndex >= 0) {
-      // Context-aware validation to avoid false positives
-      // Extract context around the keyword (50 chars before and after)
-      const contextStart = Math.max(0, keywordIndex - 50)
-      const contextEnd = Math.min(lowerText.length, keywordIndex + keywordLower.length + 50)
-      const context = lowerText.substring(contextStart, contextEnd)
-      
-      // Skip if keyword appears in common non-sensitive phrases
-      const falsePositivePatterns = [
-        // Common phrases that contain sensitive keywords but aren't sensitive
-        /\b(?:write|create|generate|make|draft|compose)\s+(?:an?\s+)?(?:email|letter|message|note|draft|article|blog|post|content|story|narrative|guide|tutorial|summary|outline|presentation|code|script|function|prompt)\b/i,
-        /\b(?:i\s+am|i'm|we\s+are|we're)\s+(?:a\s+)?(?:sales\s+rep|representative|employee|worker|developer|writer|analyst|manager|director)\b/i,
-        /\b(?:in\s+)?(?:ml\s+company|machine\s+learning\s+company|ai\s+company|tech\s+company)\b/i,
-        /\b(?:targeting|target|focusing\s+on|aiming\s+at)\s+(?:startups|companies|businesses|clients|customers)\b/i,
-        /\b(?:in\s+)?(?:india|indian|india's)\b/i,
-        /\b(?:write|create|generate|make|draft|compose)\s+(?:a\s+)?(?:perfect|perfext|good|great|excellent|high-quality)\s+(?:prompt|email|letter|message|note|draft|article|blog|post|content|story|narrative|guide|tutorial|summary|outline|presentation|code|script|function)\b/i,
-        /\b(?:on\s+)?(?:click|clock|button|action)\s+(?:of|to|for)\s+(?:optimize|optimise|optimization|optimisation)\b/i,
-        /\b(?:in\s+)?(?:case\s+of|for|regarding|about)\s+(?:this|the|a|an)\s+(?:extension|plugin|addon|tool|application|app|software|program)\b/i,
-        /\b(?:context|role|expectation|action|tone|examples?)\s*[:=]\s*/i,
-        /\b(?:standard|normal|common|typical|general)\s+(?:context|example|case|scenario|situation)\b/i,
-        /\b(?:you\s+are|you're|acting\s+as|role\s+is)\s+(?:an?\s+)?(?:expert|specialist|professional|developer|writer|analyst|rep|representative|manager|director|assistant|helper|advisor)\b/i,
-        /\b(?:high-quality|complete|comprehensive|detailed|thorough)\s+(?:output|result|response|answer|content|work|product|deliverable)\b/i,
-      ]
-      
-      // Check if keyword is in a false positive context
-      const isFalsePositive = falsePositivePatterns.some(pattern => pattern.test(context))
-      
-      // Additional checks for specific keywords
-      if (keywordLower === 'secret' && /\b(?:secret\s+(?:key|password|token|code|algorithm|formula|recipe|sauce|sauce|sauce))\b/i.test(context)) {
-        // "secret key", "secret password" etc. are sensitive, but just "secret" in other contexts might not be
-        // This is already handled by the password pattern, so we can skip standalone "secret" in non-sensitive contexts
-        if (!/\b(?:secret\s+(?:key|password|token|code|algorithm|formula))\b/i.test(context)) {
-          // Skip if it's just "secret" without sensitive context
-          continue
-        }
+    const regex = new RegExp(keywordLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
+    const matches = text.matchAll(regex)
+
+    for (const match of matches) {
+      if (match.index !== undefined) {
+        detectedItems.push({
+          type: 'sensitive_keyword',
+          value: config.keyword,
+          originalValue: match[0],
+          severity: config.severity,
+          position: match.index,
+          suggestion: config.suggestion
+        })
+        // Calculate risk score based on severity
+        if (config.severity === 'high') riskScore += 25
+        else if (config.severity === 'medium') riskScore += 15
+        else riskScore += 5
       }
-      
-      // Skip if it's a false positive
-      if (isFalsePositive) {
-        continue
-      }
-      
-      // For certain keywords, require additional context to be truly sensitive
-      const requiresContext = ['revenue', 'algorithm', 'source code', 'sourcecode']
-      if (requiresContext.includes(keywordLower)) {
-        // These keywords need to be in a context that suggests actual sensitive data
-        const sensitiveContextPatterns = [
-          /\b(?:actual|real|specific|exact|current|recent|last|this|our|their|my|your)\s+(?:revenue|algorithm|source\s+code)\b/i,
-          /\b(?:revenue|algorithm|source\s+code)\s+(?:is|was|are|were|of|for|from|to|in|at|by|with)\s+(?:\d+|specific|actual|real|exact|current|recent|last|this|our|their|my|your)\b/i,
-        ]
-        const hasSensitiveContext = sensitiveContextPatterns.some(pattern => pattern.test(context))
-        if (!hasSensitiveContext) {
-          continue
-        }
-      }
-      
-      detectedItems.push({
-        type: 'sensitive_keyword',
-        value: config.keyword,
-        severity: config.severity,
-        position: keywordIndex,
-        suggestion: config.suggestion
-      })
-      // Calculate risk score based on severity
-      if (config.severity === 'high') riskScore += 25
-      else if (config.severity === 'medium') riskScore += 15
-      else riskScore += 5
     }
   }
+
 
   // Cap risk score at 100
   riskScore = Math.min(100, riskScore)
@@ -397,9 +325,53 @@ export function detectSensitiveContent(text: string): SensitiveContentResult {
     hasSensitiveContent: detectedItems.length > 0,
     detectedItems,
     riskScore,
-    shouldBlock: riskScore >= 50 // Block if high risk
+    shouldBlock: riskScore >= 50, // Block if high risk
+    classifications: classifyCompliance(detectedItems)
   }
 }
+
+function classifyCompliance(items: SensitiveContentResult['detectedItems']): string[] {
+  const classifications = new Set<string>()
+
+  items.forEach(item => {
+    const type = item.type.toLowerCase()
+
+    // HIPAA - Health Information
+    if (type.includes('medical') || type.includes('patient') || type.includes('health') || type.includes('phi')) {
+      classifications.add('HIPAA')
+    }
+
+    // PCI - Payment Card Industry
+    if (type.includes('creditcard') || type.includes('bank') || type.includes('upi') || type.includes('ifsc') || type.includes('crypto')) {
+      classifications.add('PCI-DSS')
+    }
+
+    // GDPR - General Data Protection (PII)
+    if (type.includes('email') || type.includes('phone') || type.includes('ssn') || type.includes('aadhaar') || type.includes('pan') || type.includes('passport') || type.includes('license') || type.includes('pii')) {
+      classifications.add('GDPR')
+    }
+
+    // Additional India Privacy - PDPB (Personal Data Protection)
+    if (type.includes('aadhaar') || type.includes('pan') || type.includes('upi') || type.includes('voter')) {
+      classifications.add('PDPB-India')
+    }
+
+
+    // SOX - Sarbanes-Oxley (Financial/Corporate)
+    if (type.includes('revenue') || type.includes('salary') || type.includes('financial') || type.includes('taxid') || type.includes('gstin')) {
+      classifications.add('SOX')
+    }
+
+    // Security - Information Security / SOC2
+    if (type.includes('apikey') || type.includes('token') || type.includes('password') || type.includes('jwt') || type.includes('awskey') || type.includes('privatekey') || type.includes('db') || type.includes('ssh') || type.includes('secret')) {
+      classifications.add('SOC2/SECURITY')
+    }
+
+  })
+
+  return Array.from(classifications)
+}
+
 
 // Mask sensitive values for display
 function maskSensitiveValue(type: string, value: string): string {
@@ -436,7 +408,6 @@ function maskSensitiveValue(type: string, value: string): string {
     case 'cryptoKey':
       return value.substring(0, 4) + '***' + value.substring(value.length - 4)
     case 'aadhaar':
-    case 'aadhaarStandalone':
       // Mask Aadhaar: 5678-1234-5678 -> 5678-XXXX-XXXX
       const aadhaarDigits = value.replace(/\D/g, '')
       if (aadhaarDigits.length === 12) {
@@ -444,11 +415,9 @@ function maskSensitiveValue(type: string, value: string): string {
       }
       return 'XXXX-XXXX-XXXX'
     case 'pan':
-    case 'panStandalone':
-      // Mask PAN: ABCDE1234F -> ABCDE****F (case-insensitive)
-      const panValue = value.toUpperCase()
-      if (panValue.length === 10) {
-        return `${panValue.substring(0, 5)}****${panValue.substring(9)}`
+      // Mask PAN: ABCDE1234F -> ABCDE****F
+      if (value.length === 10) {
+        return `${value.substring(0, 5)}****${value.substring(9)}`
       }
       return '*****'
     case 'voterId':
@@ -458,14 +427,12 @@ function maskSensitiveValue(type: string, value: string): string {
       }
       return '***'
     case 'ifsc':
-    case 'ifscStandalone':
       // Mask IFSC: HDFC0001234 -> HDFC****34
       if (value.length === 11) {
         return `${value.substring(0, 4)}****${value.substring(9)}`
       }
       return '****'
     case 'upiId':
-    case 'upiIdStandalone':
       // Mask UPI: username@paytm -> user***@paytm
       if (value.includes('@')) {
         const [local, domain] = value.split('@')
@@ -492,10 +459,19 @@ function maskSensitiveValue(type: string, value: string): string {
         return `${phoneDigits.substring(0, 5)}****${phoneDigits.substring(9)}`
       }
       return '****'
+    case 'slackToken':
+    case 'stripeKey':
+    case 'githubToken':
+      return `${value.substring(0, 8)}...${value.substring(value.length - 4)}`
+    case 'sshKey':
+      return `${value.substring(0, 20)}...`
+    case 'localhost':
+      return '***.local'
     default:
       return value.substring(0, 4) + '***'
   }
 }
+
 
 // Validate matches to reduce false positives
 function isValidMatch(type: string, value: string, fullText: string, position: number): boolean {
@@ -553,149 +529,48 @@ function isValidMatch(type: string, value: string, fullText: string, position: n
       // Aadhaar must be in context mentioning aadhaar/uidai
       const aadhaarContext = fullText.substring(Math.max(0, position - 50), position + 50).toLowerCase()
       return /aadhaar|aadhar|uidai|unique\s+id/.test(aadhaarContext)
-    case 'aadhaarStandalone':
-      // Standalone Aadhaar: Must be exactly 12 digits (with or without separators)
-      // Extract digits only
-      const aadhaarDigits = value.replace(/\D/g, '')
-      if (aadhaarDigits.length !== 12) {
-        return false
-      }
-      // Check if it's in context mentioning aadhaar/uidai (preferred)
-      const standaloneAadhaarContext = fullText.substring(Math.max(0, position - 50), position + 50).toLowerCase()
-      if (/aadhaar|aadhar|uidai|unique\s+id/.test(standaloneAadhaarContext)) {
-        return true
-      }
-      // Also accept standalone 12-digit numbers as potential Aadhaar (high risk)
-      // Aadhaar numbers are always 12 digits, so any 12-digit number could be Aadhaar
-      return true
     case 'pan':
-      // Extract PAN number from match (might include "PAN number " prefix)
-      // Look for the actual PAN format: 5 letters + 4 digits + 1 letter
-      const panNumberMatch = value.match(/[A-Z]{5}\d{4}[A-Z]/)
-      if (panNumberMatch) {
-        const panNumber = panNumberMatch[0]
-        // Validate PAN format
-        if (/^[A-Z]{5}\d{4}[A-Z]$/.test(panNumber)) {
-          return true
-        }
-      }
-      // Or check if full value matches PAN format (standalone PAN)
-      const fullPanMatch = value.match(/^[A-Z]{5}\d{4}[A-Z]$/)
-      if (fullPanMatch) return true
+      // PAN must match exact format: 5 letters + 4 digits + 1 letter
+      const panMatch = value.match(/^[A-Z]{5}\d{4}[A-Z]$/i)
+      if (panMatch) return true
+
       // Or in context mentioning PAN
       const panContext = fullText.substring(Math.max(0, position - 50), position + 50).toLowerCase()
       return /pan|permanent\s+account|pan\s+card/.test(panContext)
     case 'voterId':
       // Voter ID must match format: 3 letters + 7 digits
-      const voterMatch = value.match(/^[A-Z]{3}\d{7}$/)
+      const voterMatch = value.match(/^[A-Z]{3}\d{7}$/i)
       if (voterMatch) return true
+
       // Or in context mentioning voter ID
       const voterContext = fullText.substring(Math.max(0, position - 50), position + 50).toLowerCase()
       return /voter|epic|electoral/.test(voterContext)
-    case 'voterIdStandalone':
-      // Standalone Voter ID: Must match format exactly (3 letters + 7 digits)
-      return /^[A-Z]{3}\d{7}$/.test(value)
-    case 'ifscStandalone':
-      // Standalone IFSC: Must match format exactly (4 letters + 0 + 6 alphanumeric)
-      return /^[A-Z]{4}0[A-Z0-9]{6}$/.test(value)
-    case 'upiIdStandalone':
-      // Standalone UPI ID: Must have @ symbol and valid domain
-      return value.includes('@') && /@(paytm|ybl|okaxis|axl|ibl|upi|phonepe|gpay|amazonpay)/i.test(value)
     case 'ifsc':
-    case 'ifscStandalone':
       // IFSC must match format: 4 letters + 0 + 6 alphanumeric
-      const ifscMatch = value.match(/^[A-Z]{4}0[A-Z0-9]{6}$/)
+      const ifscMatch = value.match(/^[A-Z]{4}0[A-Z0-9]{6}$/i)
       return ifscMatch !== null
-    case 'ifscStandalone':
-      // Standalone IFSC: Must match format exactly (4 letters + 0 + 6 alphanumeric)
-      return /^[A-Z]{4}0[A-Z0-9]{6}$/.test(value)
-    case 'upiIdStandalone':
-      // Standalone UPI ID: Must have @ symbol and valid domain
-      return value.includes('@') && /@(paytm|ybl|okaxis|axl|ibl|upi|phonepe|gpay|amazonpay)/i.test(value)
-    case 'voterIdStandalone':
-      // Standalone Voter ID: Must match format exactly (3 letters + 7 digits)
-      return /^[A-Z]{3}\d{7}$/.test(value)
+
     case 'upiId':
-    case 'upiIdStandalone':
       // UPI ID must have @ symbol and valid domain
       return value.includes('@') && /@(paytm|ybl|okaxis|axl|ibl|upi|phonepe|gpay|amazonpay)/i.test(value)
     case 'gstin':
       // GSTIN must match exact format: 2 digits + 5 letters + 4 digits + 1 letter + 1 char + Z + 1 char
-      const gstinMatch = value.match(/^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$/)
+      const gstinMatch = value.match(/^\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]$/i)
       return gstinMatch !== null
+
     case 'indianBankAccount':
       // Bank account must be in context mentioning account/bank
       const bankContext = fullText.substring(Math.max(0, position - 50), position + 50).toLowerCase()
       return /account|bank|savings|current|acc\s+no/.test(bankContext)
-    case 'phone':
-      // Phone number validation - must have proper format and context
-      const phoneDigits = value.replace(/\D/g, '')
-      
-      // Exclude 12-digit numbers (could be Aadhaar)
-      if (phoneDigits.length === 12) {
-        return false
-      }
-      
-      // Exclude short numbers like "100" (common in "100 words", "100 pages", etc.)
-      if (phoneDigits.length <= 3) {
-        // Only accept if it's clearly a phone number with context
-        const phoneContext = fullText.substring(Math.max(0, position - 50), position + 50).toLowerCase()
-        const hasPhoneKeywords = /phone|mobile|contact|call|whatsapp|ph\s*no|ph\s*number|telephone|tel|dial/.test(phoneContext)
-        // Also check if it's followed by common non-phone words
-        const afterMatch = fullText.substring(position, position + 20).toLowerCase()
-        const hasNonPhoneWords = /\b(words|pages|items|times|percent|%|dollars|\$|years|months|days)\b/.test(afterMatch)
-        
-        // If it's a short number and has non-phone words after it, it's not a phone
-        if (hasNonPhoneWords && !hasPhoneKeywords) {
-          return false
-        }
-        
-        // Short numbers need strong phone context
-        return hasPhoneKeywords
-      }
-      
-      // For longer numbers, require minimum length and context
-      if (phoneDigits.length >= 7) {
-        // Check context - if near "phone", "mobile", "contact", etc., it's likely a phone number
-        const phoneContext = fullText.substring(Math.max(0, position - 50), position + 50).toLowerCase()
-        const hasPhoneKeywords = /phone|mobile|contact|number|call|whatsapp|ph\s*no|ph\s*number|telephone|tel|dial/.test(phoneContext)
-        
-        // Check if it's followed by common non-phone words
-        const afterMatch = fullText.substring(position, position + 20).toLowerCase()
-        const hasNonPhoneWords = /\b(words|pages|items|times|percent|%|dollars|\$|years|months|days)\b/.test(afterMatch)
-        
-        // If it has non-phone words after it and no phone keywords, it's not a phone
-        if (hasNonPhoneWords && !hasPhoneKeywords) {
-          return false
-        }
-        
-        // If it has phone keywords, it's likely a phone
-        if (hasPhoneKeywords) {
-          return true
-        }
-        
-        // For numbers 10+ digits without context, accept them (could be international)
-        if (phoneDigits.length >= 10) {
-          return true
-        }
-      }
-      
-      return false
     case 'indianPhone':
       // Indian phone must start with 6-9 and be 10 digits (excluding country code)
-      const indianPhoneDigits = value.replace(/\D/g, '')
-      
-      // CRITICAL: Exclude 12-digit numbers (these are Aadhaar, not phone)
-      if (indianPhoneDigits.length === 12) {
-        return false
-      }
-      
+      const phoneDigits = value.replace(/\D/g, '')
       // Remove country code if present (+91, 91, or leading 0)
-      let cleanPhone = indianPhoneDigits
-      if (indianPhoneDigits.startsWith('91') && indianPhoneDigits.length > 10) {
-        cleanPhone = indianPhoneDigits.substring(2) // Remove 91 country code
-      } else if (indianPhoneDigits.startsWith('0') && indianPhoneDigits.length > 10) {
-        cleanPhone = indianPhoneDigits.substring(1) // Remove leading 0
+      let cleanPhone = phoneDigits
+      if (phoneDigits.startsWith('91') && phoneDigits.length > 10) {
+        cleanPhone = phoneDigits.substring(2) // Remove 91 country code
+      } else if (phoneDigits.startsWith('0') && phoneDigits.length > 10) {
+        cleanPhone = phoneDigits.substring(1) // Remove leading 0
       }
 
       // Must be exactly 10 digits and start with 6-9
@@ -713,6 +588,20 @@ function isValidMatch(type: string, value: string, fullText: string, position: n
       // Product key must be in context mentioning key/activation/license/product
       const productContext = fullText.substring(Math.max(0, position - 100), position + 100).toLowerCase()
       return /key|activation|license|product|serial|windows|office|software/.test(productContext)
+    case 'panStandalone':
+      // Standalone PAN check - context is preferred but regex is strong
+      const psContext = fullText.substring(Math.max(0, position - 50), position + 50).toLowerCase()
+      // If regex matches precisely [A-Z]{5}\d{4}[A-Z], it's high confidence
+      // But we still check if it's wrapped in other random letters to avoid false positives
+      const before = fullText[position - 1] || ' '
+      const after = fullText[position + value.length] || ' '
+      if (/[A-Z0-9]/i.test(before) || /[A-Z0-9]/i.test(after)) return false
+      return true
+    case 'aadhaarStandalone':
+      // Standalone Aadhaar check - context is mandatory for 12-digit numbers
+      const asContext = fullText.substring(Math.max(0, position - 60), position + 60).toLowerCase()
+      return /aadhaar|aadhar|uidai|unique\s+id|uid|identity/.test(asContext)
+
     default:
       return true
   }

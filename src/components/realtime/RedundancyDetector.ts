@@ -104,9 +104,11 @@ export class RedundancyDetector {
   }
 
   private attachListeners(): void {
-    this.textarea.addEventListener('input', () => {
-      this.debouncedUpdate()
+    // Only update on blur to prevent typing lag
+    this.textarea.addEventListener('blur', () => {
+      this.update()
     })
+
 
     this.textarea.addEventListener('scroll', () => {
       this.updateSquiggles()
@@ -164,10 +166,10 @@ export class RedundancyDetector {
     // Check for semantic redundancy using NLP
     const doc = nlp(text)
     const sentences = doc.sentences().out('array')
-    
+
     sentences.forEach((sentence, index) => {
       const words = sentence.toLowerCase().split(/\s+/)
-      
+
       // Check for repeated concepts
       const uniqueWords = new Set(words)
       if (words.length > uniqueWords.size + 2) {
@@ -209,7 +211,7 @@ export class RedundancyDetector {
     if (phrase.includes(' email ') && phrase.includes(' message')) {
       return phrase.replace(/\s+message/gi, '')
     }
-    
+
     return phrase // Default: return as-is
   }
 
@@ -218,7 +220,7 @@ export class RedundancyDetector {
     const words = sentence.split(/\s+/)
     const seen = new Set<string>()
     const result: string[] = []
-    
+
     words.forEach(word => {
       const lower = word.toLowerCase()
       if (!seen.has(lower) || result.length === 0 || result[result.length - 1] !== word) {
@@ -226,7 +228,7 @@ export class RedundancyDetector {
         seen.add(lower)
       }
     })
-    
+
     return result.join(' ')
   }
 

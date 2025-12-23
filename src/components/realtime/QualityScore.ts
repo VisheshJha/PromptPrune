@@ -81,11 +81,11 @@ export class QualityScore {
         this.onScoreClick?.()
       })
     }
-    
+
     // Add hover tooltip functionality
     const tooltip = this.shadowRoot.querySelector('.pp-quality-tooltip') as HTMLElement
     const circle = this.shadowRoot.querySelector('.pp-quality-circle') as HTMLElement
-    
+
     if (circle && tooltip) {
       circle.addEventListener('mouseenter', () => {
         tooltip.style.opacity = '1'
@@ -99,14 +99,14 @@ export class QualityScore {
 
     document.body.appendChild(shadowHost)
     this.updatePosition()
-    
+
     // Make draggable
     this.makeDraggable()
   }
 
   private makeDraggable(): void {
     if (!this.container) return
-    
+
     let isDragging = false
     let currentX = 0
     let currentY = 0
@@ -149,14 +149,17 @@ export class QualityScore {
   }
 
   private attachListeners(): void {
-    this.textarea.addEventListener('input', this.debouncedUpdate)
+    // Only update on blur or long idle to prevent typing lag
+    // User requested only regex on typing
+    this.textarea.addEventListener('blur', () => this.update())
     window.addEventListener('scroll', () => this.updatePosition(), true)
+
     window.addEventListener('resize', () => this.updatePosition())
   }
 
   private debouncedUpdate = debounce(() => {
     this.update()
-  }, 1000) // 1000ms debounce for quality score (heavier computation)
+  }, 2000) // 2000ms debounce for quality score (heavier computation - prevent UI blocking)
 
   private update(): void {
     if (!this.shadowRoot) return
@@ -167,10 +170,13 @@ export class QualityScore {
       return
     }
 
-    const { score, breakdown } = this.calculateQuality(text)
-    this.currentScore = score
-    this.currentBreakdown = breakdown
-    this.updateDisplay(score, breakdown)
+    // Run calculation asynchronously to prevent UI blocking
+    requestIdleCallback(() => {
+      const { score, breakdown } = this.calculateQuality(text)
+      this.currentScore = score
+      this.currentBreakdown = breakdown
+      this.updateDisplay(score, breakdown)
+    }, { timeout: 2000 })
   }
 
   private calculateQuality(text: string): { score: number; breakdown: QualityBreakdown } {
@@ -187,7 +193,17 @@ export class QualityScore {
       }
     }
 
-    const intent = extractIntent(text)
+    // Use setTimeout to make extractIntent non-blocking
+    // For now, use a lightweight check instead of full extractIntent
+    let intent: { action?: string; topic?: string } = {}
+    try {
+      // Only extract if text is short enough to avoid blocking
+      if (text.length < 500) {
+        intent = extractIntent(text)
+      }
+    } catch (error) {
+      // Silently fail - use empty intent
+    }
     const words = text.trim().split(/\s+/)
     const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0)
 

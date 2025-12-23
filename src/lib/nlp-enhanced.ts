@@ -308,7 +308,12 @@ export function extractConstraintsNLP(text: string): {
   tone?: string
 } {
   const doc = nlp(text)
-  const constraints: any = {}
+  const constraints: {
+    wordCount?: number
+    style?: string
+    format?: string
+    tone?: string
+  } = {}
   
   // Extract word count
   const wordCountMatch = text.match(/(\d+)\s*(?:words?|characters?)/i)

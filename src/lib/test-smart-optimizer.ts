@@ -5,6 +5,7 @@
 
 import { optimizePromptSmartly } from './smart-prompt-optimizer'
 import { getUnifiedModelManager } from './unified-model-manager'
+import { FRAMEWORKS } from './prompt-frameworks'
 
 export async function testSmartOptimizer(prompt: string) {
   console.log("🧪 Testing Smart Prompt Optimizer")
@@ -32,7 +33,6 @@ export async function testSmartOptimizer(prompt: string) {
     console.log("Duration:", duration, "ms")
     console.log()
     console.log("Results:")
-    const { FRAMEWORKS } = await import('./prompt-frameworks')
     console.log("  Framework:", result.framework, `(${FRAMEWORKS[result.framework]?.name || result.framework})`)
     console.log("  Confidence:", Math.round(result.confidence * 100) + "%")
     console.log("  Intent Category:", result.intent.category)

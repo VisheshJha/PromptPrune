@@ -21,14 +21,11 @@ Tone: [tone]`
  * For follow-ups, we don't need Role (already established)
  */
 export function generateFollowUpTemplate(): string {
-  // Import synchronously to avoid async issues in content script
-  const { extractConversationContext, generateContextAwareTemplate } = require("./context-detector")
-  
-  // Extract context from previous messages
-  const context = extractConversationContext()
-  
-  // Generate context-aware template (without Role for follow-ups)
-  return generateContextAwareTemplate(context)
+  // Simple template for follow-ups (Role already established in first prompt)
+  return `Task: [action]
+Topic: [subject]
+Format: [output format]
+Tone: [tone]`
 }
 
 /**
