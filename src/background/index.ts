@@ -3,7 +3,97 @@
  * Handles shared model storage and message passing
  */
 
+// Log immediately when service worker loads
+console.log('[ServiceWorker] 🚀 Service worker script loading...')
+
 import { getSharedModelManager } from './model-manager'
+import type { AuditLogData } from '~/lib/auth-service'
+
+console.log('[ServiceWorker] ✅ Imports successful')
+
+// Inline audit log sending to avoid import issues
+const GROOT_BASE_URL = "http://localhost:8080/api/v1"
+const GROOT_AUDIT_URL = `${GROOT_BASE_URL}/extension/sensitive-prompts`
+
+async function sendAuditLogToPortal(data: AuditLogData): Promise<void> {
+  // Get all storage to see what's there
+  const allStorage = await chrome.storage.local.get(null)
+  console.log('[ServiceWorker] 🔍 All storage keys:', Object.keys(allStorage))
+  console.log('[ServiceWorker] 🔍 Storage contents:', allStorage)
+  
+  const storage = await chrome.storage.local.get("company_config")
+  const config = storage.company_config
+  
+  // Also try to get from Plasmo storage namespace (if it uses a different key)
+  if (!config) {
+    // Try common Plasmo storage keys
+    const plasmoKeys = Object.keys(allStorage).filter(k => k.includes('company') || k.includes('config'))
+    console.log('[ServiceWorker] 🔍 Looking for config in keys:', plasmoKeys)
+    for (const key of plasmoKeys) {
+      console.log(`[ServiceWorker] 🔍 Checking key "${key}":`, allStorage[key])
+    }
+  }
+  
+  console.log('[ServiceWorker] 🔍 Checking company config:', {
+    hasConfig: !!config,
+    configType: typeof config,
+    isValid: config?.isValid,
+    hasCompanyId: !!config?.companyId,
+    companyIdValue: config?.companyId,
+    hasWebhookSecret: !!config?.webhookSecret,
+    webhookSecretLength: config?.webhookSecret?.length
+  })
+  
+  // Also try reading from Plasmo Storage namespace (if it exists)
+  if (!config) {
+    console.warn('[ServiceWorker] ⚠️ Config not found in chrome.storage.local, checking other keys...')
+    console.log('[ServiceWorker] Available keys:', Object.keys(allStorage))
+  }
+  
+  const hasValidConfig = config && config.isValid && config.companyId
+  
+  if (!hasValidConfig) {
+    console.warn('[ServiceWorker] ⚠️ Missing or invalid company config')
+    console.warn('[ServiceWorker] 💡 User needs to login to sync with portal first')
+    throw new Error("Missing company config. Please login to sync with portal.")
+  }
+  
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json"
+  }
+  
+  if (config.companyId) {
+    headers["X-Company-Id"] = config.companyId
+  }
+  if (config.webhookSecret) {
+    headers["X-Webhook-Secret"] = config.webhookSecret
+  }
+  
+  console.log(`[ServiceWorker] 📤 Sending to: ${GROOT_AUDIT_URL}`)
+  console.log(`[ServiceWorker] 📤 Headers:`, { 
+    "X-Company-Id": config.companyId?.substring(0, 8) + "...",
+    "X-Webhook-Secret": config.webhookSecret ? "***" : "missing"
+  })
+  
+  try {
+    const response = await fetch(GROOT_AUDIT_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(data)
+    })
+    
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error')
+      throw new Error(`HTTP ${response.status}: ${errorText}`)
+    }
+    
+    console.log('[ServiceWorker] ✅ Audit log sent successfully')
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    console.error('[ServiceWorker] ❌ Failed to send audit log:', errorMessage)
+    throw error
+  }
+}
 
 // Handle extension install/update
 chrome.runtime.onInstalled.addListener(async (details) => {
@@ -85,8 +175,24 @@ async function startSharedModelDownload(): Promise<void> {
   }
 }
 
+// Log that service worker is active
+console.log('[ServiceWorker] ✅ PromptPrune service worker is active and listening for messages')
+
+// Check if config exists on startup
+chrome.storage.local.get("company_config").then((result) => {
+  if (result.company_config) {
+    console.log('[ServiceWorker] ✅ Company config found on startup:', {
+      isValid: result.company_config.isValid,
+      companyId: result.company_config.companyId
+    })
+  } else {
+    console.warn('[ServiceWorker] ⚠️ No company config found on startup - user needs to login')
+  }
+})
+
 // Listen for messages from popup/content scripts
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log('[ServiceWorker] 📨 Received message:', message.type, message)
   // Handle ML model inference requests (shared models)
   if (message.type === "SMART_ANALYSIS") {
     const modelManager = getSharedModelManager()
@@ -164,6 +270,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       })
     return true
   }
+
+  // Handle audit log messages from content scripts
+  if (message.type === "AUDIT_LOG") {
+    console.log('[ServiceWorker] 📤 Processing AUDIT_LOG request')
+    console.log('[ServiceWorker] 📤 Message data:', message.data)
+    const auditData = message.data as AuditLogData
+    
+    if (!auditData) {
+      console.error('[ServiceWorker] ❌ No audit data provided')
+      sendResponse({ success: false, error: "No audit data provided" })
+      return true
+    }
+    
+    console.log('[ServiceWorker] 📤 Sending audit log to portal:', {
+      userEmail: auditData.userEmail,
+      platform: auditData.platform,
+      riskScore: auditData.riskScore
+    })
+    
+    // Use Promise to handle async properly
+    sendAuditLogToPortal(auditData)
+      .then(() => {
+        console.log('[ServiceWorker] ✅ Audit log sent, sending success response')
+        sendResponse({ success: true })
+      })
+      .catch((error) => {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        console.error('[ServiceWorker] ❌ Error in sendAuditLogToPortal:', errorMessage)
+        sendResponse({ success: false, error: errorMessage })
+      })
+    
+    return true // Keep channel open for async response
+  }
+  
+  // Log unhandled message types for debugging
+  console.warn('[ServiceWorker] ⚠️ Unhandled message type:', message.type)
 })
 
 // Optional: Context menu integration for future features
