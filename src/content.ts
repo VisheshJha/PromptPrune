@@ -96,16 +96,21 @@ const getBypassFlagForTextarea = (textArea: HTMLTextAreaElement | HTMLDivElement
 const textAreaFieldButtons = new WeakMap<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | HTMLInputElement, HTMLElement>()
 let frameworkUI: HTMLElement | null = null
 
-import { authService } from "~/lib/auth-service"
+import { authService, type AuditLogData } from "~/lib/auth-service"
 
 // ... imports
 
 // Function to update capsule auth state (can be called from multiple places)
+let lastAuthState: boolean | null = null
 function updateCapsuleAuthState(loggedIn: boolean) {
   try {
+    // Only log if state actually changed
+    if (lastAuthState !== loggedIn) {
+      console.log(`[PromptPrune] ${loggedIn ? '✅' : '🔒'} Auth state updated: ${loggedIn ? 'Unlocked' : 'Locked'} capsule`)
+      lastAuthState = loggedIn
+    }
     const capsule = getCapsuleUI()
     capsule.setLocked(!loggedIn)
-    console.log(`[PromptPrune] ${loggedIn ? '✅' : '🔒'} Auth state updated: ${loggedIn ? 'Unlocked' : 'Locked'} capsule`)
   } catch (err) {
     console.warn('[PromptPrune] Failed to update capsule auth state:', err)
   }
@@ -1686,8 +1691,58 @@ function showSensitiveContentWarning(
     e.stopPropagation()
     e.stopImmediatePropagation()
 
+    // Send Audit Log (User explicitly bypassed warning)
+    try {
+      const text = getText(textArea)
+      const { platform, model } = detectPlatformAndModel()
+
+      authService.getCurrentUser().then(user => {
+        const logData: AuditLogData = {
+          userEmail: user?.email || "anonymous",
+          platform: platform,
+          prompt: text, // Capture the prompt that was forced through
+          detectedItems: sensitiveCheck.detectedItems, // Use the check result that triggered the warning
+          riskScore: sensitiveCheck.riskScore,
+          metadata: {
+            userAgent: navigator.userAgent,
+            url: window.location.href,
+            model: model,
+            extensionVersion: chrome.runtime.getManifest().version
+          }
+        }
+
+        // Send via service worker to avoid CORS issues (content scripts can't fetch localhost)
+        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id) {
+          chrome.runtime.sendMessage(
+            { type: 'AUDIT_LOG', data: logData },
+            (response) => {
+              if (chrome.runtime.lastError) {
+                const error = chrome.runtime.lastError.message
+                console.error("❌ Failed to send audit log via service worker:", error)
+                if (error.includes("Receiving end does not exist")) {
+                  console.error("💡 Service worker is not active. Try:")
+                  console.error("   1. Reload the extension in chrome://extensions")
+                  console.error("   2. Check service worker console (chrome://extensions → Inspect views: service worker)")
+                  console.error("   3. Make sure the extension is enabled")
+                }
+              } else if (response?.success) {
+                console.log("✅ Audit log sent successfully via service worker")
+              } else {
+                console.error("❌ Failed to send audit log:", response?.error || "Unknown error")
+              }
+            }
+          )
+        } else {
+          console.error("❌ Chrome runtime not available, cannot send audit log")
+        }
+      })
+    } catch (err) {
+      console.error("Error sending audit log on proceed:", err)
+    }
+
     // Remove modal key handler first
     document.removeEventListener('keydown', modalKeyHandler, { capture: true })
+
 
     // Set bypass flag to allow submission for this textarea
     const bypassFlag = getBypassFlagForTextarea(textArea)
@@ -3094,6 +3149,26 @@ if (typeof window !== "undefined") {
       }
     }
 
+    // Test portal connectivity
+    ; (window as any).testPortalConnection = async () => {
+      console.log('[PromptPrune] Testing portal connection...')
+      const { authService } = await import('~/lib/auth-service')
+      
+      const testData = {
+        userEmail: 'test@example.com',
+        platform: 'test',
+        prompt: 'Test prompt for portal connectivity',
+        detectedItems: [],
+        riskScore: 0,
+        metadata: { test: true }
+      }
+      
+      console.log('[PromptPrune] Attempting to send test data to portal...')
+      await authService.sendAuditLog(testData)
+      console.log('[PromptPrune] Check console above for portal connection results')
+      return 'Check console for results'
+    }
+
     // Non-async wrapper for testHuggingFaceAccess (for console use)
     ; (window as any).testHuggingFace = () => {
       console.log('[PromptPrune] Running HuggingFace access test...')
@@ -3727,10 +3802,12 @@ async function checkAndStartAutoDownload(): Promise<void> {
       if (typeof chrome !== 'undefined' && chrome.runtime) {
         chrome.runtime.sendMessage({ type: 'INIT_MODELS' }, (response) => {
           if (chrome.runtime.lastError) {
-            console.error('[PromptPrune] ❌ Failed to request model init:', chrome.runtime.lastError)
+            console.error('[PromptPrune] ❌ Failed to request model init:', chrome.runtime.lastError.message || chrome.runtime.lastError)
           } else if (response?.success) {
             console.log('[PromptPrune] ✅ Download started in background service worker')
             console.log('[PromptPrune] 📊 Check background service worker console for progress')
+          } else if (response?.error) {
+            console.error('[PromptPrune] ❌ Model init failed:', response.error)
           }
         })
       }
@@ -3759,8 +3836,9 @@ if (typeof chrome !== 'undefined' && chrome.runtime) {
   })
 }
 
-// Periodic auth check (every 5 seconds) as fallback
+// Periodic auth check (every 30 seconds) as fallback
 // This ensures capsule updates even if message passing fails
+// Reduced frequency to avoid excessive logging
 setInterval(async () => {
   try {
     const user = await authService.getCurrentUser()
@@ -3768,7 +3846,7 @@ setInterval(async () => {
   } catch (err) {
     // Silently ignore - auth check might fail if not configured
   }
-}, 5000)
+}, 30000) // Changed from 5 seconds to 30 seconds
 
 // Also initialize when DOM is ready
 if (document.readyState === "loading") {
