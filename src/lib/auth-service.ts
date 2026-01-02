@@ -20,7 +20,7 @@ export interface CompanyConfig {
     subscription?: string
 }
 
-const GROOT_BASE_URL = "http://localhost:8080/api/v1"
+const GROOT_BASE_URL = "https://groot-backend-prod-luun7betqa-el.a.run.app/api/v1"
 const GROOT_API_URL = `${GROOT_BASE_URL}/auth/extension/sync`
 // Note: This endpoint stores sensitive data (not audit logs)
 // Sensitive data goes to MongoDB sensitive_prompts collection for the "Sensitive Data" section in portal
@@ -276,7 +276,7 @@ class AuthService {
         if (!hasValidConfig) {
             console.warn("⚠️ Missing company config - attempting to send anyway (for testing)")
             console.warn("💡 This usually means:")
-            console.warn("   1. Portal server is not running (check http://localhost:8080)")
+            console.warn("   1. Portal server is not accessible (check https://groot-backend-prod-luun7betqa-el.a.run.app)")
             console.warn("   2. User is not registered in the portal")
             console.warn("   3. Portal sync failed during login")
             console.warn("💡 Still attempting to send to portal for testing purposes...")
@@ -332,7 +332,7 @@ class AuthService {
             console.error(`❌ Failed to send audit log: ${errorMessage}`)
             if (errorMessage.includes('Failed to fetch')) {
                 console.error(`❌ Cannot connect to portal at ${GROOT_AUDIT_URL}`)
-                console.error("💡 Is the portal server running? Check http://localhost:8080")
+                console.error("💡 Is the portal server accessible? Check https://groot-backend-prod-luun7betqa-el.a.run.app")
                 console.error("💡 Check browser console for CORS errors")
             } else {
                 console.error("❌ Error details:", error)

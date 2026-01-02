@@ -12,7 +12,7 @@ import type { AuditLogData } from '~/lib/auth-service'
 console.log('[ServiceWorker] ✅ Imports successful')
 
 // Inline audit log sending to avoid import issues
-const GROOT_BASE_URL = "http://localhost:8080/api/v1"
+const GROOT_BASE_URL = "https://groot-backend-prod-luun7betqa-el.a.run.app/api/v1"
 const GROOT_AUDIT_URL = `${GROOT_BASE_URL}/extension/sensitive-prompts`
 
 async function sendAuditLogToPortal(data: AuditLogData): Promise<void> {

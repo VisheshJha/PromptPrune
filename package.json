@@ -46,6 +46,7 @@
     "host_permissions": [
       "http://localhost/*",
       "http://127.0.0.1/*",
+      "https://groot-backend-prod-luun7betqa-el.a.run.app/*",
       "https://chat.openai.com/*",
       "https://chatgpt.com/*",
       "https://claude.ai/*",
