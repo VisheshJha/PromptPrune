@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "plasmo dev",
     "build": "plasmo build && node scripts/fix-manifest.js",
+    "build:prod": "GROOT_API_URL=https://groot-backend-prod-luun7betqa-el.a.run.app/api/v1 npm run build",
     "package": "plasmo package",
     "share": "npm run build && node scripts/create-share-package.js",
     "test": "vitest",
@@ -43,6 +44,7 @@
     "vitest": "^1.1.0"
   },
   "manifest": {
+    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3L+8QnqA7AJpo6SjiWFNouaYP9datcfToUsPIMuDMT0ZnYR66J/v04QwQxI8EEkvbRE5jqujluHtYfnpbWy2z4uCztuB5sAbXbKbZ7yUpkZrxVDDIL0Rl/RSSG48qX2r6uEo2OWIKfg5WUEyPLiZPA1J6uWmOwfUjEDeLXR36g0Gt/0cYj7ce+80Loub8KpILYZoIL0byF58TjXFZlA02jaEkm2cAyCoPBQr1G9e34tXJUtLVLNEwUQyHbivmCl/knr8gm0PPIb3f9Rj5WTptroieHizoBzzhScemJ8JLw+vEUjCSzjwfvWUXizzINpbdXyF51uGpfAbKUEK7Giz1wIDAQAB",
     "host_permissions": [
       "http://localhost/*",
       "http://127.0.0.1/*",
@@ -74,7 +76,7 @@
       "identity"
     ],
     "oauth2": {
-      "client_id": "1072024805594-7pt4fg4vhmj7m357m28ntqsb0q3fnkvp.apps.googleusercontent.com",
+      "client_id": "1072024805594-d10g6089rbtv9t83rssk58rohg54bljh.apps.googleusercontent.com",
       "scopes": [
         "https://www.googleapis.com/auth/userinfo.email",
         "https://www.googleapis.com/auth/userinfo.profile"

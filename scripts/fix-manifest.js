@@ -34,8 +34,27 @@ try {
   process.exit(0) // Don't fail build
 }
 
-// Read manifest
-const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+// Read package.json to get the source key
+const packageJsonPath = path.join(__dirname, '..', 'package.json')
+const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
+
+// Read the built manifest
+let manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+
+// PRESERVE the 'key' field from package.json (for stable extension ID)
+const existingKey = packageJson.manifest?.key || packageJson.key
+
+// CRITICAL: Move key to the TOP of manifest (Chrome reads it first)
+// Create a new manifest object with key first
+if (existingKey) {
+  const { key, ...rest } = manifest
+  manifest = {
+    key: existingKey,  // Key MUST be first
+    ...rest
+  }
+  // Also ensure it's set explicitly
+  manifest.key = existingKey
+}
 
 // Ensure required permissions
 if (!manifest.permissions) {
@@ -103,6 +122,11 @@ if (!manifest.content_scripts || manifest.content_scripts.length === 0) {
     }
   ]
 
+  // Preserve key field before writing
+  if (existingKey && !manifest.key) {
+    manifest.key = existingKey
+  }
+
   // Write updated manifest
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
   console.log('✅ Added content_scripts to manifest.json')
@@ -120,6 +144,12 @@ if (!manifest.content_scripts || manifest.content_scripts.length === 0) {
       updated = true
     }
   })
+
+  // Preserve key field before writing
+  if (existingKey && !manifest.key) {
+    manifest.key = existingKey
+    updated = true
+  }
 
   if (updated) {
     fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
@@ -191,8 +221,92 @@ if (!manifest.background) {
   }
 }
 
+// Preserve key field for stable extension ID (always use the one from package.json)
+if (existingKey) {
+  if (manifest.key !== existingKey) {
+    manifest.key = existingKey
+    manifestChanged = true
+    console.log('✅ Updated key field in manifest.json (ensuring stable extension ID)')
+  }
+}
+
 if (manifestChanged) {
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
   console.log('✅ Updated permissions and background in manifest.json')
+}
+
+// Replace API URL placeholder in built files
+// This allows deploy scripts to set the API URL at build time
+const replaceApiUrl = (apiUrl) => {
+  if (!apiUrl || apiUrl === '__GROOT_API_URL__') {
+    return // Skip if not set or still placeholder
+  }
+
+  const buildDir = path.join(__dirname, '..', 'build', 'chrome-mv3-prod')
+
+  // Find all JS files that might contain the placeholder
+  const filesToReplace = []
+
+  // Background service worker
+  const backgroundFile = path.join(buildDir, 'static', 'background', 'index.js')
+  if (fs.existsSync(backgroundFile)) {
+    filesToReplace.push(backgroundFile)
+  }
+
+  // Popup and other JS files
+  try {
+    const jsFiles = glob.sync(path.join(buildDir, '*.js'))
+    filesToReplace.push(...jsFiles)
+  } catch (err) {
+    // glob might not be available, try manual search
+    try {
+      const files = fs.readdirSync(buildDir)
+      files.filter(f => f.endsWith('.js')).forEach(f => {
+        filesToReplace.push(path.join(buildDir, f))
+      })
+    } catch (err2) {
+      console.warn('Could not find JS files to replace:', err2.message)
+    }
+  }
+
+  let replacedCount = 0
+  filesToReplace.forEach(filePath => {
+    if (fs.existsSync(filePath)) {
+      try {
+        let content = fs.readFileSync(filePath, 'utf8')
+        const originalContent = content
+        // Replace the placeholder string with actual URL (need to escape for JS string)
+        const escapedUrl = apiUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"')
+        // Replace both the placeholder constant and the string literal
+        content = content.replace(/__GROOT_API_URL__/g, apiUrl)
+        content = content.replace(/"__GROOT_API_URL__"/g, `"${apiUrl}"`)
+        content = content.replace(/'__GROOT_API_URL__'/g, `'${apiUrl}'`)
+
+        if (content !== originalContent) {
+          fs.writeFileSync(filePath, content)
+          replacedCount++
+          console.log(`✅ Replaced API URL in ${path.basename(filePath)}`)
+        }
+      } catch (err) {
+        console.warn(`⚠️  Could not replace API URL in ${path.basename(filePath)}:`, err.message)
+      }
+    }
+  })
+
+  return replacedCount
+}
+
+// Check for API URL from environment variable or use default
+const apiUrl = process.env.GROOT_API_URL
+if (apiUrl && apiUrl !== '__GROOT_API_URL__') {
+  const replaced = replaceApiUrl(apiUrl)
+  if (replaced > 0) {
+    console.log(`✅ API URL set to: ${apiUrl} (replaced in ${replaced} file(s))`)
+  } else {
+    console.log(`ℹ️  API URL set to: ${apiUrl} (but no replacements made - placeholder might not exist)`)
+  }
+} else {
+  console.log('ℹ️  Using default API URL (localhost). Set GROOT_API_URL env var to override.')
+  console.log('   Example: GROOT_API_URL=https://api.example.com/api/v1 npm run build')
 }
 

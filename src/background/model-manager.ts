@@ -4,8 +4,20 @@
  * Uses extension origin IndexedDB (shared storage)
  */
 
+/**
+ * Shared Model Manager for Background Service Worker
+ * Downloads models once and shares across all platforms
+ * Uses extension origin IndexedDB (shared storage)
+ * 
+ * NOTE: Service workers may not have URL.createObjectURL, so models may fail to load.
+ * In that case, the extension will fall back to regex-based methods.
+ */
+
+// Import transformers config (handles URL.createObjectURL polyfill)
 import '../lib/transformers-config'
-import { pipeline } from '@xenova/transformers'
+
+// Pipeline will be imported dynamically when needed (to handle service worker limitations)
+let pipeline: any = null
 
 const FRAMEWORKS = [
   'cot', 'tot', 'ape', 'race', 'roses', 'guide', 'smart', 'create'
@@ -67,6 +79,31 @@ class SharedModelManager {
 
   private async _initialize(): Promise<void> {
     try {
+      // Verify URL.createObjectURL is available before importing transformers
+      const hasCreateObjectURL = typeof URL !== 'undefined' && 
+                                 typeof URL.createObjectURL === 'function'
+      
+      if (!hasCreateObjectURL) {
+        console.error('[SharedModelManager] ❌ URL.createObjectURL not available')
+        console.error('[SharedModelManager] This is unexpected in Chrome extension service workers')
+        throw new Error('Transformers.js not available in service worker. URL.createObjectURL is required but not available in Chrome extension service workers. Extension will use regex fallback.')
+      }
+      
+      // Check if pipeline is available (may not be in service workers due to URL.createObjectURL)
+      if (!pipeline) {
+        // Try to import it dynamically
+        try {
+          console.log('[SharedModelManager] ✅ URL.createObjectURL available, importing transformers.js...')
+          const transformers = await import('@xenova/transformers')
+          pipeline = transformers.pipeline
+          console.log('[SharedModelManager] ✅ Transformers.js imported successfully')
+        } catch (importErr) {
+          const errorMsg = importErr instanceof Error ? importErr.message : String(importErr)
+          console.error('[SharedModelManager] ❌ Failed to import transformers.js:', errorMsg)
+          throw new Error(`Transformers.js not available in service worker. URL.createObjectURL is required but not available in Chrome extension service workers. Extension will use regex fallback. Import error: ${errorMsg}`)
+        }
+      }
+      
       const startTime = Date.now()
       console.log('[SharedModelManager] 🚀 Starting model download in background service worker...')
       console.log('[SharedModelManager] 📊 Downloading ~53MB models (once for all platforms)')

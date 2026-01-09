@@ -29,16 +29,19 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
             } catch (err) {
                 console.warn("Failed to notify content scripts:", err)
             }
-            
+            console.log("Login successful")
             onLoginSuccess()
         } catch (err: any) {
             console.error("Login failed", err)
 
-            // Better error message for missing Client ID
-            if (err.message && err.message.includes("client_id")) {
-                setError("Configuration Error: Missing Google Client ID. Please check the extension manifest.")
+            // Better error messages for different error types
+            const errorMessage = err.message || String(err)
+            
+            if (errorMessage.toLowerCase().includes("oauth") || 
+                errorMessage.toLowerCase().includes("authentication")) {
+                setError(`Authentication Error: ${errorMessage}`)
             } else {
-                setError("Failed to sign in. Please try again.")
+                setError(`Failed to sign in: ${errorMessage}`)
             }
         } finally {
             setIsLoading(false)

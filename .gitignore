@@ -10,3 +10,7 @@ coverage
 .plasmo
 *.zip
 dist
+# Extension private keys (NEVER commit these!)
+extension_key*.pem
+*_key_private.pem
+*.pem

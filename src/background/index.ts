@@ -6,14 +6,57 @@
 // Log immediately when service worker loads
 console.log('[ServiceWorker] 🚀 Service worker script loading...')
 
+// CRITICAL: Ensure URL.createObjectURL is available BEFORE any imports
+// Chrome extension service workers DO support URL.createObjectURL, but we need to ensure it's accessible
+// Transformers.js needs this for blob handling
+
+// Check if URL.createObjectURL exists - Chrome extension service workers should have it
+if (typeof URL !== 'undefined') {
+  if (typeof URL.createObjectURL === 'function') {
+    console.log('[ServiceWorker] ✅ URL.createObjectURL is available')
+    // Ensure it's also on self.URL for transformers.js
+    if (typeof self !== 'undefined') {
+      if (typeof (self as any).URL === 'undefined') {
+        (self as any).URL = URL
+      } else if (typeof (self as any).URL.createObjectURL === 'undefined') {
+        (self as any).URL.createObjectURL = URL.createObjectURL.bind(URL)
+      }
+    }
+  } else {
+    // If not available, try to get it from global scope
+    console.warn('[ServiceWorker] ⚠️ URL.createObjectURL not found on URL constructor, checking alternatives...')
+    const GlobalURL = (typeof self !== 'undefined' ? (self as any).URL : undefined) || 
+                      (typeof globalThis !== 'undefined' ? (globalThis as any).URL : undefined)
+    
+    if (GlobalURL && typeof GlobalURL.createObjectURL === 'function') {
+      URL.createObjectURL = GlobalURL.createObjectURL.bind(GlobalURL)
+      console.log('[ServiceWorker] ✅ URL.createObjectURL found and assigned from global scope')
+    } else {
+      // Last resort: Chrome extension service workers should have this, but if not, create a minimal polyfill
+      console.error('[ServiceWorker] ❌ URL.createObjectURL not available - this is unexpected in Chrome extension service workers')
+      // Note: A real polyfill would need to use IndexedDB or other storage, which is complex
+      // For now, transformers.js will fail gracefully and use fallback methods
+    }
+  }
+} else {
+  console.error('[ServiceWorker] ❌ URL is not defined - this is unexpected')
+}
+
 import { getSharedModelManager } from './model-manager'
 import type { AuditLogData } from '~/lib/auth-service'
 
 console.log('[ServiceWorker] ✅ Imports successful')
 
 // Inline audit log sending to avoid import issues
-const GROOT_BASE_URL = "https://groot-backend-prod-luun7betqa-el.a.run.app/api/v1"
+// API URL - replaced at build time by build script
+// Default: localhost for development (if placeholder not replaced)
+const GROOT_BASE_URL_RAW = "__GROOT_API_URL__"
+const GROOT_BASE_URL = GROOT_BASE_URL_RAW === "__GROOT_API_URL__" 
+  ? "http://localhost:8080/api/v1" 
+  : GROOT_BASE_URL_RAW
 const GROOT_AUDIT_URL = `${GROOT_BASE_URL}/extension/sensitive-prompts`
+
+console.log(`[ServiceWorker] 🔧 Groot API URL: ${GROOT_BASE_URL}`)
 
 async function sendAuditLogToPortal(data: AuditLogData): Promise<void> {
   // Get all storage to see what's there
@@ -109,11 +152,15 @@ chrome.runtime.onInstalled.addListener(async (details) => {
     },
   })
 
-  // Trigger automatic model download on install/update
+  // Trigger automatic model download on install/update (non-blocking)
   if (details.reason === 'install' || details.reason === 'update') {
     console.log("PromptPrune: Starting shared model download in background...")
-    // Download models in background service worker (shared storage)
-    startSharedModelDownload()
+    // Delay to ensure service worker is fully initialized (non-blocking)
+    setTimeout(() => {
+      startSharedModelDownload().catch(() => {
+        // Silently handle - extension works without models
+      })
+    }, 2000)
   }
 })
 
@@ -125,7 +172,12 @@ chrome.runtime.onStartup.addListener(() => {
     
     if (!modelsReady) {
       console.log("PromptPrune: Starting shared model download on startup")
-      startSharedModelDownload()
+      // Delay to ensure service worker is ready (non-blocking)
+      setTimeout(() => {
+        startSharedModelDownload().catch(() => {
+          // Silently handle - extension works without models
+        })
+      }, 2000)
     }
   })
 })
@@ -133,8 +185,30 @@ chrome.runtime.onStartup.addListener(() => {
 /**
  * Download models once in background service worker (shared across all platforms)
  */
+// Non-blocking model download - doesn't prevent extension from working
 async function startSharedModelDownload(): Promise<void> {
-  console.log('[PromptPrune] 📥 Starting shared model download (once for all platforms)...')
+  // Check if already downloaded or in progress (non-blocking check)
+  try {
+    const storage = await chrome.storage.local.get([
+      'promptprune-models-ready',
+      'promptprune-model-download-status'
+    ])
+    
+    if (storage['promptprune-models-ready']) {
+      console.log('[PromptPrune] ✅ Models already downloaded')
+      return
+    }
+    
+    if (storage['promptprune-model-download-status'] === 'downloading') {
+      console.log('[PromptPrune] ⏳ Model download already in progress')
+      return
+    }
+  } catch (err) {
+    // If storage check fails, continue anyway (non-blocking)
+    console.warn('[PromptPrune] Could not check model status, continuing...')
+  }
+  
+  console.log('[PromptPrune] 📥 Starting shared model download (background, non-blocking)...')
   console.log('[PromptPrune] 📊 This will download ~53MB models to extension storage')
   console.log('[PromptPrune] 📊 Models will be shared across ALL platforms (ChatGPT, Copilot, Gemini, etc.)')
   
@@ -142,11 +216,11 @@ async function startSharedModelDownload(): Promise<void> {
     const startTime = Date.now()
     const modelManager = getSharedModelManager()
     
-    // Show progress updates
+    // Show progress updates (non-blocking)
     chrome.storage.local.set({
       'promptprune-model-download-progress': 0,
       'promptprune-model-download-status': 'downloading'
-    })
+    }).catch(() => {})
     
     await modelManager.initialize()
     
@@ -160,18 +234,21 @@ async function startSharedModelDownload(): Promise<void> {
       'promptprune-model-download-progress': 100,
       'promptprune-model-download-status': 'ready',
       'promptprune-model-download-time': Date.now()
-    })
+    }).catch(() => {})
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
-    console.error('[PromptPrune] ❌ Shared model download failed:', errorMessage)
-    console.error('[PromptPrune] ⚠️ Extension will use regex fallback methods (still works, just less accurate)')
+    console.warn('[PromptPrune] ⚠️ Model download failed (using regex fallback):', errorMessage)
+    console.log('[PromptPrune] 💡 Extension will use regex fallback methods (still works, just less accurate)')
     
+    // Mark as failed but don't throw - extension works fine without models
     chrome.storage.local.set({
       'promptprune-models-ready': false,
       'promptprune-model-download-attempted': true,
       'promptprune-model-download-status': 'failed',
       'promptprune-model-download-error': errorMessage
-    })
+    }).catch(() => {})
+    
+    // Don't rethrow - extension should continue working without models
   }
 }
 

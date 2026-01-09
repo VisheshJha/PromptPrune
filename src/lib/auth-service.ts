@@ -20,12 +20,21 @@ export interface CompanyConfig {
     subscription?: string
 }
 
-const GROOT_BASE_URL = "https://groot-backend-prod-luun7betqa-el.a.run.app/api/v1"
+// API URL configuration - replaced at build time by build script
+// Default: localhost for development (if placeholder not replaced)
+// Production: deploy script replaces __GROOT_API_URL__ with production URL
+const GROOT_BASE_URL_RAW = "__GROOT_API_URL__"
+const GROOT_BASE_URL = GROOT_BASE_URL_RAW === "__GROOT_API_URL__"
+    ? "http://localhost:8080/api/v1"
+    : GROOT_BASE_URL_RAW
 const GROOT_API_URL = `${GROOT_BASE_URL}/auth/extension/sync`
 // Note: This endpoint stores sensitive data (not audit logs)
 // Sensitive data goes to MongoDB sensitive_prompts collection for the "Sensitive Data" section in portal
 // Audit logs are separate and will be implemented later (will sync to blob storage)
 const GROOT_AUDIT_URL = `${GROOT_BASE_URL}/extension/sensitive-prompts`
+
+// Log the API URL on module load for debugging
+console.log(`🔧 Groot API URL: ${GROOT_BASE_URL}`)
 
 
 export interface AuditLogData {
@@ -42,6 +51,8 @@ export interface AuditLogData {
 class AuthService {
     private static instance: AuthService
     private token: string | null = null
+    private loginInProgress: boolean = false
+    private loginPromise: Promise<UserProfile> | null = null
 
     private constructor() { }
 
@@ -53,11 +64,41 @@ class AuthService {
     }
 
     async login(): Promise<UserProfile> {
+        // Prevent multiple simultaneous login attempts
+        if (this.loginInProgress && this.loginPromise) {
+            console.log('⏳ Login already in progress, waiting for existing attempt...')
+            return this.loginPromise
+        }
+
+        this.loginInProgress = true
+        this.loginPromise = this._login().finally(() => {
+            this.loginInProgress = false
+            this.loginPromise = null
+        })
+
+        return this.loginPromise
+    }
+
+    private async _login(): Promise<UserProfile> {
         try {
+            // Log OAuth configuration for debugging
+            try {
+                const manifest = chrome.runtime.getManifest()
+                console.log("🔐 OAuth Configuration:", {
+                    clientId: manifest.oauth2?.client_id || "NOT FOUND",
+                    scopes: manifest.oauth2?.scopes || [],
+                    extensionId: chrome.runtime.id
+                })
+            } catch (e) {
+                console.warn("Could not read manifest for OAuth config:", e)
+            }
+
             // 1. Get Auth Token
+            console.log("🔑 Requesting OAuth token...")
             const token = await this.getAuthToken(true)
             if (!token) throw new Error("Failed to get auth token")
 
+            console.log("✅ OAuth token received")
             this.token = token
 
             // 2. Fetch User Profile
@@ -71,12 +112,12 @@ class AuthService {
                     companyId: config.companyId,
                     hasWebhookSecret: !!config.webhookSecret
                 })
-                
+
                 if (config.isValid) {
                     // Store in both storage systems
                     await storage.set("company_config", config)
                     await chrome.storage.local.set({ company_config: config })
-                    
+
                     // Verify it was stored
                     const verify = await chrome.storage.local.get("company_config")
                     console.log("✅ Company config saved and verified:", {
@@ -148,7 +189,7 @@ class AuthService {
         // Fast check from local storage first
         const user = await storage.get<UserProfile>("auth_user")
         const config = await chrome.storage.local.get("company_config")
-        
+
         // If user exists but no config, trigger sync
         if (user && (!config.company_config || !config.company_config.isValid)) {
             console.log("⚠️ User logged in but no company config found - triggering sync...")
@@ -166,7 +207,7 @@ class AuthService {
                 console.warn("Failed to sync config on getCurrentUser:", err)
             }
         }
-        
+
         if (user) return user
 
         // Validate session silently if needed
@@ -176,7 +217,7 @@ class AuthService {
                 // Refresh profile to be safe
                 const refreshedUser = await this.fetchUserProfile(token)
                 await storage.set("auth_user", refreshedUser)
-                
+
                 // Also sync config if we have a valid token
                 try {
                     const syncedConfig = await this.syncWithPortal(refreshedUser.email, token)
@@ -188,7 +229,7 @@ class AuthService {
                 } catch (err) {
                     console.warn("Failed to sync config on getCurrentUser (refreshed):", err)
                 }
-                
+
                 return refreshedUser
             }
         } catch {
@@ -200,16 +241,116 @@ class AuthService {
 
     private getAuthToken(interactive: boolean): Promise<string> {
         return new Promise((resolve, reject) => {
-            chrome.identity.getAuthToken({ interactive }, (token) => {
+            const manifest = chrome.runtime.getManifest()
+            const clientId = manifest.oauth2?.client_id
+
+            if (!clientId) {
+                reject(new Error("OAuth client ID not found in manifest"))
+                return
+            }
+
+            // Build OAuth URL - use authorization code flow with Chrome extension redirect
+            // Chrome extensions use a special redirect URI: https://<extension-id>.chromiumapp.org/
+            const redirectUri = `https://${chrome.runtime.id}.chromiumapp.org/`
+
+            const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?` +
+                `client_id=${encodeURIComponent(clientId)}&` +
+                `response_type=code&` +
+                `redirect_uri=${encodeURIComponent(redirectUri)}&` +
+                `scope=${encodeURIComponent('https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile')}&` +
+                `access_type=offline&` +
+                `prompt=consent select_account`
+
+            console.log('🔑 Using Chrome Identity API (standard Chrome extension OAuth)')
+            console.log('🔑 Extension ID:', chrome.runtime.id)
+            console.log('🔑 Redirect URI:', redirectUri)
+
+            chrome.identity.launchWebAuthFlow({
+                url: authUrl,
+                interactive: interactive
+            }, async (responseUrl) => {
                 if (chrome.runtime.lastError) {
-                    reject(chrome.runtime.lastError.message || "Unknown auth error")
-                } else if (!token) {
-                    reject("Failed to retrieve token")
-                } else {
+                    reject(new Error(chrome.runtime.lastError.message || "Unknown error"))
+                    return
+                }
+
+                if (!responseUrl) {
+                    reject(new Error("No response URL from OAuth flow"))
+                    return
+                }
+
+                console.log('✅ OAuth response received')
+
+                try {
+                    const url = new URL(responseUrl)
+                    const error = url.searchParams.get('error')
+                    if (error) {
+                        const errorDesc = url.searchParams.get('error_description') || error
+                        reject(new Error(`OAuth error: ${errorDesc}`))
+                        return
+                    }
+
+                    const code = url.searchParams.get('code')
+                    if (!code) {
+                        reject(new Error('No authorization code in OAuth response'))
+                        return
+                    }
+
+                    console.log('🔄 Exchanging authorization code for access token...')
+
+                    // Exchange code for token via backend
+                    const token = await this.exchangeCodeForToken(code, redirectUri)
+
+                    console.log('✅ Access token received')
                     resolve(token)
+
+                } catch (err) {
+                    reject(new Error(`Failed to process OAuth response: ${err instanceof Error ? err.message : String(err)}`))
                 }
             })
         })
+    }
+
+    private async exchangeCodeForToken(code: string, redirectUri: string): Promise<string> {
+        const exchangeUrl = `${GROOT_BASE_URL}/auth/extension/exchange`
+
+        const response = await fetch(exchangeUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                code,
+                redirect_uri: redirectUri,
+                extensionId: chrome.runtime.id // Send extension ID for account linking
+            })
+        })
+
+        if (!response.ok) {
+            // Try to parse error response for user-friendly messages
+            try {
+                const errorData = await response.json()
+
+                // Handle specific error: user not registered in portal
+                if (errorData.error === 'user_not_registered') {
+                    throw new Error(`Not registered: ${errorData.description || 'Please register on the portal first.'}`)
+                }
+
+                // Generic error with description
+                throw new Error(errorData.description || errorData.error || `Token exchange failed: ${response.status}`)
+            } catch (parseError) {
+                // If JSON parsing fails, use generic error
+                const errorText = await response.text().catch(() => 'Unknown error')
+                throw new Error(`Token exchange failed: ${response.status} ${errorText}`)
+            }
+        }
+
+        const data = await response.json()
+        if (!data.access_token) {
+            throw new Error('No access token in response')
+        }
+
+        return data.access_token
     }
 
     private async fetchUserProfile(token: string): Promise<UserProfile> {
@@ -239,7 +380,10 @@ class AuthService {
                     "Content-Type": "application/json",
                     // "Authorization": `Bearer ${token}` // Optional: Send Google token for extra verification if needed later
                 },
-                body: JSON.stringify({ email })
+                body: JSON.stringify({
+                    email,
+                    extensionId: chrome.runtime.id // Send extension ID for account linking
+                })
             })
 
             if (!response.ok) {
@@ -272,7 +416,7 @@ class AuthService {
     async sendAuditLog(data: AuditLogData): Promise<void> {
         const config = await storage.get<CompanyConfig>("company_config")
         const hasValidConfig = config && config.isValid && config.companyId
-        
+
         if (!hasValidConfig) {
             console.warn("⚠️ Missing company config - attempting to send anyway (for testing)")
             console.warn("💡 This usually means:")
@@ -289,7 +433,7 @@ class AuthService {
             const headers: Record<string, string> = {
                 "Content-Type": "application/json"
             }
-            
+
             // Add company headers if available
             if (config?.companyId) {
                 headers["X-Company-Id"] = config.companyId
@@ -297,16 +441,16 @@ class AuthService {
             if (config?.webhookSecret) {
                 headers["X-Webhook-Secret"] = config.webhookSecret
             }
-            
+
             console.log(`📤 Attempting to send sensitive data to portal: ${GROOT_AUDIT_URL}`)
             console.log(`📤 Headers:`, headers)
-            console.log(`📤 Data:`, { 
-                userEmail: data.userEmail, 
-                platform: data.platform, 
+            console.log(`📤 Data:`, {
+                userEmail: data.userEmail,
+                platform: data.platform,
                 riskScore: data.riskScore,
                 detectedItemsCount: data.detectedItems?.length || 0
             })
-            
+
             const response = await fetch(GROOT_AUDIT_URL, {
                 method: "POST",
                 headers,
