@@ -25,9 +25,9 @@ if (typeof URL !== 'undefined') {
   } else {
     // If not available, try to get it from global scope
     console.warn('[ServiceWorker] ⚠️ URL.createObjectURL not found on URL constructor, checking alternatives...')
-    const GlobalURL = (typeof self !== 'undefined' ? (self as any).URL : undefined) || 
-                      (typeof globalThis !== 'undefined' ? (globalThis as any).URL : undefined)
-    
+    const GlobalURL = (typeof self !== 'undefined' ? (self as any).URL : undefined) ||
+      (typeof globalThis !== 'undefined' ? (globalThis as any).URL : undefined)
+
     if (GlobalURL && typeof GlobalURL.createObjectURL === 'function') {
       URL.createObjectURL = GlobalURL.createObjectURL.bind(GlobalURL)
       console.log('[ServiceWorker] ✅ URL.createObjectURL found and assigned from global scope')
@@ -53,8 +53,8 @@ console.log('[ServiceWorker] ✅ Imports successful')
 // API URL - replaced at build time by build script
 // Default: localhost for development (if placeholder not replaced)
 const GROOT_BASE_URL_RAW = "__GROOT_API_URL__"
-const GROOT_BASE_URL = GROOT_BASE_URL_RAW === "__GROOT_API_URL__" 
-  ? "http://localhost:8080/api/v1" 
+const GROOT_BASE_URL = GROOT_BASE_URL_RAW === "__GROOT_API_URL__"
+  ? "http://localhost:8080/api/v1"
   : GROOT_BASE_URL_RAW
 const GROOT_AUDIT_URL = `${GROOT_BASE_URL}/extension/sensitive-prompts`
 
@@ -65,10 +65,10 @@ async function sendAuditLogToPortal(data: AuditLogData): Promise<void> {
   const allStorage = await chrome.storage.local.get(null)
   console.log('[ServiceWorker] 🔍 All storage keys:', Object.keys(allStorage))
   console.log('[ServiceWorker] 🔍 Storage contents:', allStorage)
-  
+
   const storage = await chrome.storage.local.get("company_config")
   const config = storage.company_config
-  
+
   // Also try to get from Plasmo storage namespace (if it uses a different key)
   if (!config) {
     // Try common Plasmo storage keys
@@ -78,7 +78,7 @@ async function sendAuditLogToPortal(data: AuditLogData): Promise<void> {
       console.log(`[ServiceWorker] 🔍 Checking key "${key}":`, allStorage[key])
     }
   }
-  
+
   console.log('[ServiceWorker] 🔍 Checking company config:', {
     hasConfig: !!config,
     configType: typeof config,
@@ -88,50 +88,50 @@ async function sendAuditLogToPortal(data: AuditLogData): Promise<void> {
     hasWebhookSecret: !!config?.webhookSecret,
     webhookSecretLength: config?.webhookSecret?.length
   })
-  
+
   // Also try reading from Plasmo Storage namespace (if it exists)
   if (!config) {
     console.warn('[ServiceWorker] ⚠️ Config not found in chrome.storage.local, checking other keys...')
     console.log('[ServiceWorker] Available keys:', Object.keys(allStorage))
   }
-  
+
   const hasValidConfig = config && config.isValid && config.companyId
-  
+
   if (!hasValidConfig) {
     console.warn('[ServiceWorker] ⚠️ Missing or invalid company config')
     console.warn('[ServiceWorker] 💡 User needs to login to sync with portal first')
     throw new Error("Missing company config. Please login to sync with portal.")
   }
-  
+
   const headers: Record<string, string> = {
     "Content-Type": "application/json"
   }
-  
+
   if (config.companyId) {
     headers["X-Company-Id"] = config.companyId
   }
   if (config.webhookSecret) {
     headers["X-Webhook-Secret"] = config.webhookSecret
   }
-  
+
   console.log(`[ServiceWorker] 📤 Sending to: ${GROOT_AUDIT_URL}`)
-  console.log(`[ServiceWorker] 📤 Headers:`, { 
+  console.log(`[ServiceWorker] 📤 Headers:`, {
     "X-Company-Id": config.companyId?.substring(0, 8) + "...",
     "X-Webhook-Secret": config.webhookSecret ? "***" : "missing"
   })
-  
+
   try {
     const response = await fetch(GROOT_AUDIT_URL, {
       method: "POST",
       headers,
       body: JSON.stringify(data)
     })
-    
+
     if (!response.ok) {
       const errorText = await response.text().catch(() => 'Unknown error')
       throw new Error(`HTTP ${response.status}: ${errorText}`)
     }
-    
+
     console.log('[ServiceWorker] ✅ Audit log sent successfully')
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
@@ -143,7 +143,7 @@ async function sendAuditLogToPortal(data: AuditLogData): Promise<void> {
 // Handle extension install/update
 chrome.runtime.onInstalled.addListener(async (details) => {
   console.log("PromptPrune extension installed", details.reason)
-  
+
   // Initialize storage with default settings
   chrome.storage.local.set({
     settings: {
@@ -171,7 +171,7 @@ chrome.runtime.onStartup.addListener(() => {
   console.log("PromptPrune: Browser startup - checking for shared models")
   chrome.storage.local.get(['promptprune-models-ready'], (result) => {
     const modelsReady = result['promptprune-models-ready'] === true
-    
+
     if (!modelsReady) {
       console.log("PromptPrune: Starting shared model download on startup")
       // Delay to ensure service worker is ready (non-blocking)
@@ -195,12 +195,12 @@ async function startSharedModelDownload(): Promise<void> {
       'promptprune-models-ready',
       'promptprune-model-download-status'
     ])
-    
+
     if (storage['promptprune-models-ready']) {
       console.log('[PromptPrune] ✅ Models already downloaded')
       return
     }
-    
+
     if (storage['promptprune-model-download-status'] === 'downloading') {
       console.log('[PromptPrune] ⏳ Model download already in progress')
       return
@@ -209,47 +209,47 @@ async function startSharedModelDownload(): Promise<void> {
     // If storage check fails, continue anyway (non-blocking)
     console.warn('[PromptPrune] Could not check model status, continuing...')
   }
-  
+
   console.log('[PromptPrune] 📥 Starting shared model download (background, non-blocking)...')
   console.log('[PromptPrune] 📊 This will download ~53MB models to extension storage')
   console.log('[PromptPrune] 📊 Models will be shared across ALL platforms (ChatGPT, Copilot, Gemini, etc.)')
-  
+
   try {
     const startTime = Date.now()
     const modelManager = getSharedModelManager()
-    
+
     // Show progress updates (non-blocking)
     chrome.storage.local.set({
       'promptprune-model-download-progress': 0,
       'promptprune-model-download-status': 'downloading'
-    }).catch(() => {})
-    
+    }).catch(() => { })
+
     await modelManager.initialize()
-    
+
     const duration = ((Date.now() - startTime) / 1000).toFixed(1)
     console.log(`[PromptPrune] ✅ Shared models ready! (Downloaded in ${duration}s)`)
     console.log('[PromptPrune] ✅ Models are now available for ALL platforms')
     console.log('[PromptPrune] 📊 Storage: ~53MB (shared, not per-platform)')
-    
+
     chrome.storage.local.set({
       'promptprune-models-ready': true,
       'promptprune-model-download-progress': 100,
       'promptprune-model-download-status': 'ready',
       'promptprune-model-download-time': Date.now()
-    }).catch(() => {})
+    }).catch(() => { })
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
     console.warn('[PromptPrune] ⚠️ Model download failed (using regex fallback):', errorMessage)
     console.log('[PromptPrune] 💡 Extension will use regex fallback methods (still works, just less accurate)')
-    
+
     // Mark as failed but don't throw - extension works fine without models
     chrome.storage.local.set({
       'promptprune-models-ready': false,
       'promptprune-model-download-attempted': true,
       'promptprune-model-download-status': 'failed',
       'promptprune-model-download-error': errorMessage
-    }).catch(() => {})
-    
+    }).catch(() => { })
+
     // Don't rethrow - extension should continue working without models
   }
 }
@@ -275,12 +275,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // Handle ML model inference requests (shared models)
   if (message.type === "SMART_ANALYSIS") {
     const modelManager = getSharedModelManager()
-    
+
     // Add timeout to prevent hanging (5 seconds max)
     const timeoutPromise = new Promise((_, reject) => {
       setTimeout(() => reject(new Error('Analysis timeout after 5s')), 5000)
     })
-    
+
     Promise.race([
       modelManager.smartAnalysis(message.text),
       timeoutPromise
@@ -291,6 +291,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .catch(error => {
         const errorMessage = error instanceof Error ? error.message : String(error)
         console.error('[ServiceWorker] Smart analysis error:', errorMessage)
+        sendResponse({ success: false, error: errorMessage })
+      })
+    return true // Keep channel open for async response
+  }
+
+  if (message.type === "DETECT_PII_ML") {
+    const modelManager = getSharedModelManager()
+
+    // Add timeout to prevent hanging (5 seconds max)
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('PII detection timeout after 5s')), 5000)
+    })
+
+    Promise.race([
+      modelManager.detectPII(message.text),
+      timeoutPromise
+    ])
+      .then(result => {
+        sendResponse({ success: true, result })
+      })
+      .catch(error => {
+        const errorMessage = error instanceof Error ? error.message : String(error)
+        // Don't log timeout errors as errors, they are expected for large texts or busy CPU
+        if (!errorMessage.includes('timeout')) {
+          console.error('[ServiceWorker] PII detection error:', errorMessage)
+        }
         sendResponse({ success: false, error: errorMessage })
       })
     return true // Keep channel open for async response
@@ -320,7 +346,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         optimized: message.optimized,
         timestamp: Date.now(),
       })
-      
+
       const trimmed = savedPrompts.slice(-50)
       chrome.storage.local.set({ savedPrompts: trimmed }, () => {
         sendResponse({ success: true })
@@ -355,19 +381,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('[ServiceWorker] 📤 Processing AUDIT_LOG request')
     console.log('[ServiceWorker] 📤 Message data:', message.data)
     const auditData = message.data as AuditLogData
-    
+
     if (!auditData) {
       console.error('[ServiceWorker] ❌ No audit data provided')
       sendResponse({ success: false, error: "No audit data provided" })
       return true
     }
-    
+
     console.log('[ServiceWorker] 📤 Sending audit log to portal:', {
       userEmail: auditData.userEmail,
       platform: auditData.platform,
       riskScore: auditData.riskScore
     })
-    
+
     // Use Promise to handle async properly
     sendAuditLogToPortal(auditData)
       .then(() => {
@@ -379,10 +405,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.error('[ServiceWorker] ❌ Error in sendAuditLogToPortal:', errorMessage)
         sendResponse({ success: false, error: errorMessage })
       })
-    
+
     return true // Keep channel open for async response
   }
-  
+
   // Log unhandled message types for debugging
   console.warn('[ServiceWorker] ⚠️ Unhandled message type:', message.type)
 })

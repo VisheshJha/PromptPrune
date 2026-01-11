@@ -59,6 +59,7 @@ interface SmartAnalysisResult {
 class SharedModelManager {
   private classifier: any = null
   private embedder: any = null
+  private ner: any = null
   private fillMask: any = null
   private modelReady = false
   private initPromise: Promise<void> | null = null
@@ -80,15 +81,15 @@ class SharedModelManager {
   private async _initialize(): Promise<void> {
     try {
       // Verify URL.createObjectURL is available before importing transformers
-      const hasCreateObjectURL = typeof URL !== 'undefined' && 
-                                 typeof URL.createObjectURL === 'function'
-      
+      const hasCreateObjectURL = typeof URL !== 'undefined' &&
+        typeof URL.createObjectURL === 'function'
+
       if (!hasCreateObjectURL) {
         console.error('[SharedModelManager] ❌ URL.createObjectURL not available')
         console.error('[SharedModelManager] This is unexpected in Chrome extension service workers')
         throw new Error('Transformers.js not available in service worker. URL.createObjectURL is required but not available in Chrome extension service workers. Extension will use regex fallback.')
       }
-      
+
       // Check if pipeline is available (may not be in service workers due to URL.createObjectURL)
       if (!pipeline) {
         // Try to import it dynamically
@@ -103,17 +104,17 @@ class SharedModelManager {
           throw new Error(`Transformers.js not available in service worker. URL.createObjectURL is required but not available in Chrome extension service workers. Extension will use regex fallback. Import error: ${errorMsg}`)
         }
       }
-      
+
       const startTime = Date.now()
       console.log('[SharedModelManager] 🚀 Starting model download in background service worker...')
       console.log('[SharedModelManager] 📊 Downloading ~53MB models (once for all platforms)')
-      
+
       // Update progress
       chrome.storage.local.set({
         'promptprune-model-download-progress': 10,
         'promptprune-model-download-status': 'downloading'
       })
-      
+
       // Model 1: Zero-shot classifier (~30MB)
       console.log('[SharedModelManager] 📥 Downloading classifier model...')
       this.classifier = await pipeline(
@@ -121,7 +122,7 @@ class SharedModelManager {
         'Xenova/distilbert-base-uncased-finetuned-sst-2-english',
         { quantized: true }
       )
-      
+
       chrome.storage.local.set({
         'promptprune-model-download-progress': 60
       })
@@ -134,10 +135,22 @@ class SharedModelManager {
         { quantized: true }
       )
 
+      chrome.storage.local.set({
+        'promptprune-model-download-progress': 80
+      })
+
+      // Model 3: NER (PII) Model (~25MB)
+      console.log('[SharedModelManager] 📥 Downloading NER model for PII...')
+      this.ner = await pipeline(
+        'token-classification',
+        'Xenova/bert-base-NER',
+        { quantized: true }
+      )
+
       this.modelReady = true
-      
+
       const duration = ((Date.now() - startTime) / 1000).toFixed(1)
-      
+
       // Mark as downloaded in shared storage
       chrome.storage.local.set({
         'promptprune-unified-model-downloaded': true,
@@ -146,24 +159,24 @@ class SharedModelManager {
         'promptprune-model-download-status': 'ready',
         'promptprune-model-download-time': Date.now()
       })
-      
+
       console.log(`[SharedModelManager] ✅ Models initialized successfully! (${duration}s)`)
       console.log('[SharedModelManager] ✅ Models are now available for ALL platforms')
       console.log('[SharedModelManager] 📊 Storage: ~53MB (shared, not per-platform)')
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       console.error('[SharedModelManager] ❌ Model initialization failed:', errorMessage)
-      
+
       this.modelReady = false
       this.initPromise = null
-      
+
       chrome.storage.local.set({
         'promptprune-unified-model-downloaded': false,
         'promptprune-models-ready': false,
         'promptprune-model-download-status': 'failed',
         'promptprune-model-download-error': errorMessage
       })
-      
+
       throw error
     }
   }
@@ -204,10 +217,10 @@ class SharedModelManager {
     try {
       const sensitiveLabels = ['sensitive', 'personal', 'private', 'confidential']
       const result = await this.classifier(text, sensitiveLabels)
-      
+
       const maxScore = Math.max(...result.scores)
       const maxIndex = result.scores.indexOf(maxScore)
-      
+
       return {
         isSensitive: maxScore > 0.7 && sensitiveLabels[maxIndex] !== 'sensitive',
         confidence: maxScore,
@@ -237,6 +250,22 @@ class SharedModelManager {
     } catch (error) {
       console.warn('[SharedModelManager] Framework matching failed:', error)
       return this.getFallbackFramework(text)
+    }
+  }
+
+  async detectPII(text: string): Promise<any[]> {
+    if (!this.ner) {
+      return []
+    }
+
+    try {
+      // Run NER model
+      // aggregation_strategy: 'simple' groups tokens (e.g. "New", "York" -> "New York")
+      const result = await this.ner(text, { ignore_labels: ['O'], aggregation_strategy: 'simple' })
+      return result
+    } catch (error) {
+      console.warn('[SharedModelManager] PII detection failed:', error)
+      return []
     }
   }
 
@@ -285,8 +314,12 @@ class SharedModelManager {
     }
   }
 
+  getNER(): any {
+    return this.ner
+  }
+
   isReady(): boolean {
-    return this.modelReady && this.classifier !== null && this.embedder !== null
+    return this.modelReady && this.classifier !== null && this.embedder !== null && this.ner !== null
   }
 }
 

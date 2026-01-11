@@ -335,7 +335,32 @@ if (apiUrl && apiUrl !== '__GROOT_API_URL__') {
     console.log(`ℹ️  API URL set to: ${apiUrl} (but no replacements made - placeholder might not exist)`)
   }
 } else {
-  console.log('ℹ️  Using default API URL (localhost). Set GROOT_API_URL env var to override.')
-  console.log('   Example: GROOT_API_URL=https://api.example.com/api/v1 npm run build')
+  // For local dev builds: replace any production URLs back to localhost
+  // This fixes the case where a previous prod build left production URLs in the build
+  const localhostUrl = 'http://localhost:8080/api/v1'
+  const productionUrl = 'https://groot-backend-prod-luun7betqa-el.a.run.app/api/v1'
+  
+  // Check if production URL exists in build files
+  const buildDir = path.join(__dirname, '..', 'build', 'chrome-mv3-prod')
+  const backgroundFile = path.join(buildDir, 'static', 'background', 'index.js')
+  
+  let needsCleanup = false
+  if (fs.existsSync(backgroundFile)) {
+    const content = fs.readFileSync(backgroundFile, 'utf8')
+    if (content.includes(productionUrl)) {
+      needsCleanup = true
+    }
+  }
+  
+  if (needsCleanup) {
+    console.log('🔄 Detected production URLs in build - replacing with localhost for local dev...')
+    const replaced = replaceApiUrl(localhostUrl)
+    if (replaced > 0) {
+      console.log(`✅ Replaced production URLs with localhost (${replaced} file(s))`)
+    }
+  } else {
+    console.log('ℹ️  Using default API URL (localhost). Set GROOT_API_URL env var to override.')
+    console.log('   Example: GROOT_API_URL=https://api.example.com/api/v1 npm run build')
+  }
 }
 
