@@ -96,8 +96,17 @@ class AuthService {
 
             // 1. Get Auth Token
             console.log("🔑 Requesting OAuth token...")
-            const token = await this.getAuthToken(true)
-            if (!token) throw new Error("Failed to get auth token")
+            console.log("🔑 API Base URL:", GROOT_BASE_URL)
+            let token: string
+            try {
+                token = await this.getAuthToken(true)
+                if (!token) throw new Error("Failed to get auth token")
+            } catch (error) {
+                const errorMsg = error instanceof Error ? error.message : String(error)
+                console.error("❌ getAuthToken failed:", errorMsg)
+                console.error("❌ Full error:", error)
+                throw error
+            }
 
             console.log("✅ OAuth token received")
             this.token = token
@@ -155,7 +164,18 @@ class AuthService {
 
             return user
         } catch (error) {
-            console.error("Login failed:", error)
+            const errorMsg = error instanceof Error ? error.message : String(error)
+            console.error("❌ Login failed with error:", errorMsg)
+            console.error("❌ Error stack:", error instanceof Error ? error.stack : 'No stack trace')
+            console.error("❌ Full error object:", error)
+            
+            // Provide context about what might have failed
+            if (errorMsg.includes('Failed to fetch') || errorMsg.includes('network') || errorMsg.includes('connect')) {
+                console.error("❌ Network error detected - backend may not be running")
+                console.error(`❌ Backend URL: ${GROOT_BASE_URL}`)
+                console.error("❌ Please ensure the backend server is running")
+            }
+            
             throw error
         }
     }
@@ -266,38 +286,61 @@ class AuthService {
             console.log('🔑 Extension ID:', chrome.runtime.id)
             console.log('🔑 Redirect URI:', redirectUri)
 
+            console.log('🔑 Launching OAuth flow...')
+            console.log('🔑 Auth URL (first 200 chars):', authUrl.substring(0, 200))
+            
             chrome.identity.launchWebAuthFlow({
                 url: authUrl,
                 interactive: interactive
             }, async (responseUrl) => {
                 if (chrome.runtime.lastError) {
-                    reject(new Error(chrome.runtime.lastError.message || "Unknown error"))
+                    const errorMsg = chrome.runtime.lastError.message || "Unknown error"
+                    console.error('❌ OAuth flow error:', errorMsg)
+                    console.error('❌ Chrome runtime error details:', chrome.runtime.lastError)
+                    
+                    // Provide helpful error messages for common issues
+                    if (errorMsg.includes('redirect_uri_mismatch')) {
+                        reject(new Error(`OAuth redirect URI mismatch. Please ensure https://${chrome.runtime.id}.chromiumapp.org/ is registered in Google Cloud Console.`))
+                    } else if (errorMsg.includes('OAuth2') || errorMsg.includes('oauth')) {
+                        reject(new Error(`OAuth error: ${errorMsg}. Check Google Cloud Console OAuth configuration.`))
+                    } else if (errorMsg.includes('user_cancelled') || errorMsg.includes('canceled')) {
+                        reject(new Error('Login cancelled by user'))
+                    } else {
+                        reject(new Error(`OAuth flow failed: ${errorMsg}`))
+                    }
                     return
                 }
 
                 if (!responseUrl) {
-                    reject(new Error("No response URL from OAuth flow"))
+                    console.error('❌ No response URL from OAuth flow')
+                    console.error('❌ This usually means the OAuth popup was closed or cancelled')
+                    reject(new Error("No response URL from OAuth flow - popup may have been closed"))
                     return
                 }
 
                 console.log('✅ OAuth response received')
+            console.log('✅ Response URL:', responseUrl.substring(0, 200) + '...') // Log first 200 chars
 
                 try {
                     const url = new URL(responseUrl)
                     const error = url.searchParams.get('error')
                     if (error) {
                         const errorDesc = url.searchParams.get('error_description') || error
+                        console.error(`❌ OAuth error from Google: ${error} - ${errorDesc}`)
                         reject(new Error(`OAuth error: ${errorDesc}`))
                         return
                     }
 
                     const code = url.searchParams.get('code')
                     if (!code) {
+                        console.error('❌ No authorization code in OAuth response')
+                        console.error('❌ Response URL params:', Object.fromEntries(url.searchParams))
                         reject(new Error('No authorization code in OAuth response'))
                         return
                     }
 
                     console.log('🔄 Exchanging authorization code for access token...')
+                    console.log('🔄 Code length:', code.length)
 
                     // Exchange code for token via backend
                     const token = await this.exchangeCodeForToken(code, redirectUri)
@@ -314,36 +357,58 @@ class AuthService {
 
     private async exchangeCodeForToken(code: string, redirectUri: string): Promise<string> {
         const exchangeUrl = `${GROOT_BASE_URL}/auth/extension/exchange`
+        
+        console.log(`🔄 Exchanging code at: ${exchangeUrl}`)
+        console.log(`🔄 Extension ID: ${chrome.runtime.id}`)
+        console.log(`🔄 Redirect URI: ${redirectUri}`)
 
-        const response = await fetch(exchangeUrl, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                code,
-                redirect_uri: redirectUri,
-                extensionId: chrome.runtime.id // Send extension ID for account linking
+        let response: Response
+        try {
+            response = await fetch(exchangeUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    code,
+                    redirect_uri: redirectUri,
+                    extensionId: chrome.runtime.id // Send extension ID for account linking
+                })
             })
-        })
 
-        if (!response.ok) {
-            // Try to parse error response for user-friendly messages
-            try {
-                const errorData = await response.json()
+            console.log(`📡 Exchange response status: ${response.status} ${response.statusText}`)
 
-                // Handle specific error: user not registered in portal
-                if (errorData.error === 'user_not_registered') {
-                    throw new Error(`Not registered: ${errorData.description || 'Please register on the portal first.'}`)
+            if (!response.ok) {
+                // Try to parse error response for user-friendly messages
+                try {
+                    const errorData = await response.json()
+                    console.error(`❌ Exchange error data:`, errorData)
+
+                    // Handle specific error: user not registered in portal
+                    if (errorData.error === 'user_not_registered') {
+                        throw new Error(`Not registered: ${errorData.description || 'Please register on the portal first.'}`)
+                    }
+
+                    // Generic error with description
+                    throw new Error(errorData.description || errorData.error || `Token exchange failed: ${response.status}`)
+                } catch (parseError) {
+                    // If JSON parsing fails, use generic error
+                    const errorText = await response.text().catch(() => 'Unknown error')
+                    console.error(`❌ Exchange error text:`, errorText)
+                    throw new Error(`Token exchange failed: ${response.status} ${errorText}`)
                 }
-
-                // Generic error with description
-                throw new Error(errorData.description || errorData.error || `Token exchange failed: ${response.status}`)
-            } catch (parseError) {
-                // If JSON parsing fails, use generic error
-                const errorText = await response.text().catch(() => 'Unknown error')
-                throw new Error(`Token exchange failed: ${response.status} ${errorText}`)
             }
+        } catch (error) {
+            // Enhanced error logging for network issues
+            if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+                console.error(`❌ Network error connecting to: ${exchangeUrl}`)
+                console.error(`❌ This usually means:`)
+                console.error(`   1. Backend server is not running at ${GROOT_BASE_URL}`)
+                console.error(`   2. CORS is blocking the request`)
+                console.error(`   3. Network connectivity issue`)
+                throw new Error(`Cannot connect to backend at ${exchangeUrl}. Is the server running?`)
+            }
+            throw error
         }
 
         const data = await response.json()
