@@ -195,6 +195,70 @@ const DETECTION_PATTERNS = {
     pattern: /\b(?:\+91[-.\s]?|91[-.\s]?|0)?[6-9]\d{9}\b/g,
     severity: 'medium' as const,
     suggestion: '⚠️ Indian phone number detected - Consider removing for privacy'
+  },
+  // Physical Address Detection
+  usAddress: {
+    // Matches: "123 Main St, New York, NY 10001" or "123 Main Street, Apt 4B, New York, NY 10001"
+    pattern: /\b\d+\s+[A-Za-z0-9\s]+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd|Court|Ct|Place|Pl|Way|Parkway|Pkwy|Circle|Cir|Square|Sq)[\s,]+[A-Za-z\s]+,\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 Physical address detected - DO NOT SHARE - Privacy violation risk (GDPR/PII)'
+  },
+  usZipCode: {
+    // US ZIP codes (5 digits or 5+4 format)
+    pattern: /\b\d{5}(?:-\d{4})?\b/g,
+    severity: 'medium' as const,
+    suggestion: '⚠️ ZIP code detected - Consider removing for privacy'
+  },
+  postalCode: {
+    pattern: /\b(?:[A-Z]{1,2}\d{1,2}[A-Z]?\s?\d[A-Z]{2}|[A-Z]\d[A-Z]\s?\d[A-Z]\d|\d{4,5}(?:\s?-\s?\d{4})?)\b/gi,
+    severity: 'medium' as const,
+    suggestion: '⚠️ Postal code detected - Consider removing for privacy'
+  },
+  indianPincode: {
+    // Indian PIN codes (6 digits)
+    pattern: /\b\d{6}\b/g,
+    severity: 'medium' as const,
+    suggestion: '⚠️ PIN code detected - Consider removing for privacy (India)'
+  },
+  // Enhanced Indian Address Patterns
+  indianAddress: {
+    // Indian address formats
+    pattern: /\b(?:house\s*(?:no|number|#)?|flat\s*(?:no|number|#)?|apartment|apt|building|bldg|plot|sector|block|colony|village|town|city|district|state|pin|pincode)[\s:,-]?[A-Za-z0-9\s,.-]+(?:,\s*)?(?:[A-Za-z\s]+,\s*)?(?:[A-Za-z\s]+,\s*)?(?:[A-Z]{2,}|[A-Za-z\s]+)?\s*\d{6}\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 Indian address detected - DO NOT SHARE - Privacy violation risk (GDPR/PDPB-India)'
+  },
+  indianAddressComponents: {
+    pattern: /\b(?:village|district|state|taluk|tehsil|mandal|block|panchayat)[\s:,-]+[A-Za-z]{3,}(?:[\s,]+(?:village|district|state|taluk|tehsil|mandal|block|panchayat)[\s:,-]+[A-Za-z]{3,})*/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 Indian address components detected - DO NOT SHARE - Privacy violation risk (GDPR/PDPB-India)'
+  },
+  indianStreetAddress: {
+    pattern: /\b(?:mg\s+road|connaught\s+place|sector\s+\d+|block\s+[A-Z]|colony|nagar|puram|vihar|enclave|extension|layout|main\s+road|high\s+street|market|bazaar|chowk|circle|square)[\s,]+[A-Za-z\s]*/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 Indian street/locality detected - DO NOT SHARE - Privacy violation risk (GDPR/PDPB-India)'
+  },
+  streetAddress: {
+    pattern: /\b\d+\s+[A-Za-z0-9\s]+(?:Street|St|Avenue|Ave|Road|Rd|Drive|Dr|Lane|Ln|Boulevard|Blvd|Court|Ct|Place|Pl|Way|Parkway|Pkwy|Circle|Cir|Square|Sq|Highway|Hwy|Route|Rt)\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 Street address detected - DO NOT SHARE - Privacy violation risk (GDPR/PII)'
+  },
+  // Date of Birth detection
+  dateOfBirth: {
+    pattern: /\b(?:date\s+of\s+birth|dob|birth\s+date|born\s+on)\s*[:=]?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4}|\d{4}[\/\-\.]\d{1,2}[\/\-\.]\d{1,2})\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 Date of birth detected - DO NOT SHARE - Identity theft risk (GDPR/PII)'
+  },
+  // Gender detection (in context)
+  gender: {
+    pattern: /\b(?:gender|sex)\s*[:=]\s*(?:male|female|m|f|other|transgender|trans|non-binary|nonbinary)\b/gi,
+    severity: 'medium' as const,
+    suggestion: '⚠️ Gender information detected - Consider removing for privacy (GDPR/PII)'
+  },
+  // Partial address detection (for Indian addresses without PIN)
+  partialAddress: {
+    pattern: /\b(?:address\s*[:=]\s*)?\d+[\s,]+[A-Za-z0-9\s,.-]+(?:,\s*[A-Za-z0-9\s,.-]+){2,}(?:,\s*[A-Z]{2,})*\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 Partial address detected - DO NOT SHARE - Privacy violation risk (GDPR/PDPB-India)'
   }
 }
 
@@ -670,6 +734,44 @@ function isValidMatch(type: string, value: string, fullText: string, position: n
         return /phone|mobile|contact|number|call|whatsapp|ph\s*no|ph\s*number|telephone|tel/.test(phoneContext)
       }
       return false
+    case 'usAddress':
+      const addressContext = fullText.substring(Math.max(0, position - 100), position + 100).toLowerCase()
+      return /address|location|residence|home|office|building|apartment|apt|suite|unit|mail|deliver|ship|billing|shipping/.test(addressContext)
+    case 'usZipCode':
+      const zipDigits = value.replace(/\D/g, '')
+      if (zipDigits.length === 5 || zipDigits.length === 9) {
+        const zipContext = fullText.substring(Math.max(0, position - 50), position + 50).toLowerCase()
+        if (/address|zip|postal|city|state|location|mail|deliver|ship|billing|shipping/.test(zipContext)) return true
+        const afterZip = fullText.substring(position + value.length, position + value.length + 10)
+        if (/^[,\s]+[A-Z]{2}\b/i.test(afterZip)) return true
+      }
+      return false
+    case 'postalCode':
+      const postalContext = fullText.substring(Math.max(0, position - 100), position + 100).toLowerCase()
+      if (!/address|postal|zip|code|location|mail|deliver|ship|billing|shipping|city|state|country/.test(postalContext)) return false
+      return true
+    case 'indianPincode':
+      const pinDigits = value.replace(/\D/g, '')
+      if (pinDigits.length !== 6) return false
+      const pinContext = fullText.substring(Math.max(0, position - 100), position + 100).toLowerCase()
+      return /address|pincode|pin\s*code|postal|location|mail|deliver|ship|billing|shipping|india|indian|village|district|state|city/.test(pinContext)
+    case 'indianAddress':
+      const indianAddrContext = fullText.substring(Math.max(0, position - 150), position + 150).toLowerCase()
+      return /address|location|residence|home|office|building|apartment|apt|house|flat|sector|block|colony|village|district|state|city|pin|pincode|mail|deliver|ship|billing|shipping|india|indian/.test(indianAddrContext)
+    case 'indianAddressComponents':
+    case 'indianStreetAddress':
+      const compContext = fullText.substring(Math.max(0, position - 100), position + 100).toLowerCase()
+      return /address|location|residence|home|office|building|village|district|state|city|pin|pincode|mail|deliver|ship|billing|shipping|india|indian/.test(compContext)
+    case 'streetAddress':
+      const streetContext = fullText.substring(Math.max(0, position - 100), position + 100).toLowerCase()
+      return /address|location|residence|home|office|building|apartment|apt|suite|unit|mail|deliver|ship|billing|shipping/.test(streetContext)
+    case 'dateOfBirth':
+      return true // Regex is specific enough
+    case 'gender':
+      return true
+    case 'partialAddress':
+      const partialCtx = fullText.substring(Math.max(0, position - 150), position + 150).toLowerCase()
+      return /address|location|residence|home|office|building|apartment|apt|house|flat|sector|block|colony|village|district|state|city|pin|pincode|mail|deliver|ship|billing|shipping|india|indian/.test(partialCtx)
     case 'windowsKey':
       // Windows key must be in context mentioning windows/activation/product/license
       const windowsContext = fullText.substring(Math.max(0, position - 100), position + 100).toLowerCase()
