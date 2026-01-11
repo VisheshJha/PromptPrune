@@ -43,6 +43,7 @@ export interface AuditLogData {
     prompt: string
     detectedItems: any[]
     riskScore: number
+    classifications?: string[] // GDPR, HIPAA, PCI-DSS, etc.
     metadata: any
 }
 

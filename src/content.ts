@@ -1703,6 +1703,7 @@ function showSensitiveContentWarning(
           prompt: text, // Capture the prompt that was forced through
           detectedItems: sensitiveCheck.detectedItems, // Use the check result that triggered the warning
           riskScore: sensitiveCheck.riskScore,
+          classifications: sensitiveCheck.classifications || [], // GDPR, HIPAA, PCI-DSS, etc.
           metadata: {
             userAgent: navigator.userAgent,
             url: window.location.href,
