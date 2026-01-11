@@ -20,7 +20,7 @@ export interface CompanyConfig {
     subscription?: string
 }
 
-// API URL configuration - replaced at build time by build script
+// API URL configuration - replaced at build time by fix-manifest.js script
 // Default: localhost for development (if placeholder not replaced)
 // Production: deploy script replaces __GROOT_API_URL__ with production URL
 const GROOT_BASE_URL_RAW = "__GROOT_API_URL__"

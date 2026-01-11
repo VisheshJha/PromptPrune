@@ -275,10 +275,39 @@ const replaceApiUrl = (apiUrl) => {
       try {
         let content = fs.readFileSync(filePath, 'utf8')
         const originalContent = content
-        // Replace the placeholder string with actual URL (need to escape for JS string)
-        const escapedUrl = apiUrl.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '\\"')
-        // Replace both the placeholder constant and the string literal
+        
+        // Replace the placeholder with production URL
+        // Source code: const GROOT_BASE_URL_RAW = "__GROOT_API_URL__"
+        // const GROOT_BASE_URL = GROOT_BASE_URL_RAW === "__GROOT_API_URL__" ? "http://localhost:8080/api/v1" : GROOT_BASE_URL_RAW
+        // When minified: "__GROOT_API_URL__"===i?"http://localhost:8080/api/v1":i
+        
+        // IMPORTANT: Replace localhost FIRST (in case placeholder was already replaced)
+        // 1. Fix unquoted URLs (common issue after minification)
+        // Pattern: let i=https://... or const i=https://... or var i=https://...
+        const unquotedUrlPattern = /(let|const|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(https?:\/\/[^"'\s,;\)]+)/g
+        content = content.replace(unquotedUrlPattern, (match, keyword, varName, url) => {
+          // Only fix if it's our API URL
+          if (url.includes('localhost:8080/api/v1') || url.includes('groot-backend')) {
+            return `${keyword} ${varName}="${apiUrl}"`
+          }
+          return match
+        })
+        
+        // 2. Replace any localhost:8080/api/v1 URLs with production URL (quoted versions)
+        content = content.replace(/http:\/\/localhost:8080\/api\/v1/g, apiUrl)
+        content = content.replace(/"http:\/\/localhost:8080\/api\/v1"/g, `"${apiUrl}"`)
+        content = content.replace(/'http:\/\/localhost:8080\/api\/v1'/g, `'${apiUrl}'`)
+        
+        // 3. Replace minified ternary pattern (most specific - handle first)
+        // Pattern: "__GROOT_API_URL__"===var?"http://localhost:8080/api/v1":var
+        // Replace with production URL directly (no ternary needed in production)
+        const minifiedTernaryPattern = /"__GROOT_API_URL__"===([a-zA-Z_$][a-zA-Z0-9_$]*)\?"http:\/\/localhost:8080\/api\/v1":\1/g
+        content = content.replace(minifiedTernaryPattern, `"${apiUrl}"`)
+        
+        // 4. Replace direct placeholder: __GROOT_API_URL__
         content = content.replace(/__GROOT_API_URL__/g, apiUrl)
+        
+        // 5. Replace string literals: "__GROOT_API_URL__" or '__GROOT_API_URL__'
         content = content.replace(/"__GROOT_API_URL__"/g, `"${apiUrl}"`)
         content = content.replace(/'__GROOT_API_URL__'/g, `'${apiUrl}'`)
 

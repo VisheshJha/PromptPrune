@@ -50,6 +50,8 @@ console.log('[ServiceWorker] ✅ Imports successful')
 // Inline audit log sending to avoid import issues
 // API URL - replaced at build time by build script
 // Default: localhost for development (if placeholder not replaced)
+// API URL - replaced at build time by build script
+// Default: localhost for development (if placeholder not replaced)
 const GROOT_BASE_URL_RAW = "__GROOT_API_URL__"
 const GROOT_BASE_URL = GROOT_BASE_URL_RAW === "__GROOT_API_URL__" 
   ? "http://localhost:8080/api/v1" 
