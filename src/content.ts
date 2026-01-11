@@ -24,7 +24,6 @@ import { getUnifiedModelManager } from "~/lib/unified-model-manager"
 import { showDownloadProgress } from "~/content/model-download-ui"
 import { getCapsuleUI } from "~/content/capsule-ui"
 
-import { detectSensitiveContentML, detectSensitiveContentSync } from "~/lib/ml-sensitive-detector"
 import { detectSensitiveContent, type SensitiveContentResult } from "~/lib/sensitive-content-detector"
 
 import { RealTimeAssistant } from "~/components/realtime"
@@ -1368,7 +1367,7 @@ function findSubmitButton(textArea: HTMLElement): HTMLElement | null {
 function showSensitiveContentWarning(
   textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement,
   text: string,
-  sensitiveCheck: Awaited<ReturnType<typeof detectSensitiveContentML>>
+  sensitiveCheck: SensitiveContentResult
 ) {
   // Show sensitive content warning modal
 
@@ -1982,7 +1981,10 @@ async function maskSensitiveData(textArea: HTMLTextAreaElement | HTMLDivElement 
     const originalValue = item.originalValue
     if (!originalValue) continue
 
-    const typeLabel = item.type.replace(/_/g, ' ').toUpperCase().replace('STANDALONE', '').trim() || 'SENSITIVE'
+    // Use type-specific label format: [TYPE_REDACTED] for better clarity
+    // Types are already in snake_case (e.g., 'indian_pincode', 'us_address')
+    // Just convert to uppercase for the label
+    const typeLabel = item.type.toUpperCase()
     const replacement = `[${typeLabel}_REDACTED]`
 
     // Primary: Replace at exact position
@@ -2405,7 +2407,7 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
     // Regex is clean - check with ML in background (non-blocking, with timeout)
     // Don't block UI - if ML is slow, allow submission
     try {
-      const mlCheckPromise = detectSensitiveContentML(textTrimmed)
+      const mlCheckPromise = Promise.resolve(detectSensitiveContent(textTrimmed))
       const timeoutPromise = new Promise<SensitiveContentResult>((resolve) => {
         setTimeout(() => resolve({
           hasSensitiveContent: false,
@@ -2473,7 +2475,7 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
 
         // Regex is clean - check with ML in background (non-blocking, with timeout)
         // Don't block UI - if ML is slow, allow submission
-        const mlCheckPromise = detectSensitiveContentML(textTrimmed)
+        const mlCheckPromise = Promise.resolve(detectSensitiveContent(textTrimmed))
         const timeoutPromise = new Promise<SensitiveContentResult>((resolve) => {
           setTimeout(() => resolve({
             hasSensitiveContent: false,
@@ -2533,8 +2535,8 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
         // Get text immediately
         const currentText = getText(textArea)
 
-        // Check with ML model (async)
-        detectSensitiveContentSync(currentText.trim()).then(syncCheck => {
+        // Check with regex (sync)
+        Promise.resolve(detectSensitiveContent(currentText.trim())).then(syncCheck => {
           if (syncCheck.hasSensitiveContent) {
             e.preventDefault()
             e.stopPropagation()
@@ -2683,8 +2685,8 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
   // Enhanced test function for sensitive content detection
   ; (textArea as any).__testSensitiveDetection = (testText?: string) => {
     const text = testText || getText(textArea)
-    // Use ML model only
-    detectSensitiveContentML(text).then(result => {
+    // Use regex detection
+    Promise.resolve(detectSensitiveContent(text)).then(result => {
       if (result.hasSensitiveContent) {
         showSensitiveContentWarning(textArea, text, result)
       }
@@ -2704,7 +2706,7 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
   // Also add global test function
   if (!(window as any).__promptpruneTestSensitive) {
     (window as any).__promptpruneTestSensitive = async (testText: string) => {
-      const result = await detectSensitiveContentML(testText)
+      const result = detectSensitiveContent(testText)
       // Find first textarea and show warning
       const firstTextarea = document.querySelector('textarea, [contenteditable="true"]') as HTMLElement
       if (firstTextarea && result.hasSensitiveContent) {
@@ -2717,7 +2719,7 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
   // Old test function (keep for compatibility)
   ; (textArea as any).__testSensitiveDetectionOld = async (testText?: string) => {
     const text = testText || getText(textArea).trim()
-    const result = await detectSensitiveContentML(text)
+    const result = detectSensitiveContent(text)
     if (result.hasSensitiveContent) {
       showSensitiveContentWarning(textArea, text, result)
     }
@@ -3497,7 +3499,7 @@ function attachGlobalSensitiveContentListeners() {
 
           // If regex is clean, check with ML in background (non-blocking)
           // But don't block UI - allow submission if ML check takes too long
-          const mlCheckPromise = detectSensitiveContentML(textTrimmed)
+          const mlCheckPromise = Promise.resolve(detectSensitiveContent(textTrimmed))
           const timeoutPromise = new Promise<SensitiveContentResult>((resolve) => {
             setTimeout(() => resolve({
               hasSensitiveContent: false,
@@ -3667,7 +3669,7 @@ function attachGlobalSensitiveContentListeners() {
 
           // If regex is clean, check with ML in background (non-blocking)
           // But don't block UI - allow submission if ML check takes too long
-          const mlCheckPromise = detectSensitiveContentML(textTrimmed)
+          const mlCheckPromise = Promise.resolve(detectSensitiveContent(textTrimmed))
           const timeoutPromise = new Promise<SensitiveContentResult>((resolve) => {
             setTimeout(() => resolve({
               hasSensitiveContent: false,

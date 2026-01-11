@@ -5,7 +5,7 @@
  */
 
 import { getUnifiedModelManager } from './unified-model-manager'
-import { detectSensitiveContentML } from './ml-sensitive-detector'
+import { detectSensitiveContent } from './sensitive-content-detector'
 import { type FrameworkType } from './prompt-frameworks'
 import { intelligentSpellCheck } from './intelligent-processor'
 import { ErrorHandler } from './error-handler'
@@ -60,8 +60,8 @@ export async function optimizePromptSmartly(
   // Initialize NLP for specialized understanding (POS/entity extraction)
   const doc = nlp(cleanedPrompt)
 
-  // Step 2: Detect sensitive content (ML model only)
-  const mlSensitive = await detectSensitiveContentML(cleanedPrompt)
+  // Step 2: Detect sensitive content (regex-based)
+  const mlSensitive = detectSensitiveContent(cleanedPrompt)
   let warnings: string[] = mlSensitive.detectedItems.map(item => item.suggestion)
   let isSensitive = mlSensitive.detectedItems.length > 0
 

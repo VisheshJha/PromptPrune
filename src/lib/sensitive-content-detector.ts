@@ -257,7 +257,17 @@ const SENSITIVE_KEYWORDS = [
   { keyword: 'ssh-keygen', severity: 'high' as const, suggestion: '🚨 SSH key generation context detected - Security breach risk' },
   { keyword: 'hardcoded password', severity: 'high' as const, suggestion: '🚨 Hardcoded credentials detected - Security breach risk' },
   { keyword: 'access_key_id', severity: 'high' as const, suggestion: '🚨 Cloud access key ID detected - Infrastructure breach risk' },
-  { keyword: 'secret_access_key', severity: 'high' as const, suggestion: '🚨 Cloud secret access key detected - Infrastructure breach risk' }
+  { keyword: 'secret_access_key', severity: 'high' as const, suggestion: '🚨 Cloud secret access key detected - Infrastructure breach risk' },
+  // GDPR/India Special Category Data
+  { keyword: 'fingerprint', severity: 'high' as const, suggestion: '🚨 Biometric data detected - Critical Privacy Risk (GDPR/Aadhaar)' },
+  { keyword: 'iris scan', severity: 'high' as const, suggestion: '🚨 Biometric data detected - Critical Privacy Risk (GDPR/Aadhaar)' },
+  { keyword: 'retina scan', severity: 'high' as const, suggestion: '🚨 Biometric data detected - Critical Privacy Risk (GDPR/Aadhaar)' },
+  { keyword: 'facial recognition', severity: 'high' as const, suggestion: '🚨 Biometric data detected - Critical Privacy Risk (GDPR/Aadhaar)' },
+  { keyword: 'voice print', severity: 'high' as const, suggestion: '🚨 Biometric data detected - Critical Privacy Risk (GDPR)' },
+  { keyword: 'sexual orientation', severity: 'high' as const, suggestion: '🚨 Sensitive personal data detected - Critical Privacy Risk (GDPR)' },
+  { keyword: 'political opinion', severity: 'high' as const, suggestion: '🚨 Sensitive personal data detected - Critical Privacy Risk (GDPR)' },
+  { keyword: 'caste', severity: 'high' as const, suggestion: '🚨 Sensitive personal data detected - Critical Privacy Risk (India/GDPR)' },
+  { keyword: 'religion', severity: 'high' as const, suggestion: '🚨 Sensitive personal data detected - Critical Privacy Risk (GDPR)' }
 ]
 
 
@@ -265,24 +275,76 @@ export function detectSensitiveContent(text: string): SensitiveContentResult {
   const detectedItems: SensitiveContentResult['detectedItems'] = []
   let riskScore = 0
 
-  // Check each pattern
+  // Track detected positions to avoid overlaps (email should take priority)
+  const detectedRanges: Array<{ start: number; end: number; type: string }> = []
+
+  // Helper to check if position overlaps with already detected items
+  const hasOverlap = (start: number, end: number, excludeType?: string): boolean => {
+    return detectedRanges.some(range => {
+      if (excludeType && range.type === excludeType) return false
+      // Check if ranges overlap
+      return !(end <= range.start || start >= range.end)
+    })
+  }
+
+  // Helper to add detected item and track its range
+  const addDetectedItem = (item: SensitiveContentResult['detectedItems'][0]) => {
+    detectedItems.push(item)
+    detectedRanges.push({
+      start: item.position,
+      end: item.position + item.originalValue.length,
+      type: item.type
+    })
+  }
+
+  // PRIORITY 1: Detect emails FIRST (before postal codes that might match email domains)
+  const emailConfig = DETECTION_PATTERNS.email
+  emailConfig.pattern.lastIndex = 0
+  const emailMatches = text.matchAll(emailConfig.pattern)
+  for (const match of emailMatches) {
+    const start = match.index || 0
+    const end = start + match[0].length
+    if (!hasOverlap(start, end)) {
+      if (isValidMatch('email', match[0], text, start)) {
+        addDetectedItem({
+          type: 'email',
+          value: maskSensitiveValue('email', match[0]),
+          originalValue: match[0],
+          severity: emailConfig.severity, // 'medium'
+          position: start,
+          suggestion: emailConfig.suggestion
+        })
+        riskScore += 15 // Email is medium severity
+      }
+    }
+  }
+
+  // PRIORITY 2: Check other patterns (excluding email which we already handled)
   for (const [type, config] of Object.entries(DETECTION_PATTERNS)) {
+    // Skip email - already handled
+    if (type === 'email') continue
+
     // Reset regex lastIndex to avoid issues with global regex
     config.pattern.lastIndex = 0
     const matches = text.matchAll(config.pattern)
 
     for (const match of matches) {
+      const start = match.index || 0
+      const end = start + match[0].length
+
+      // Skip if overlaps with higher priority detections (email, etc.)
+      if (hasOverlap(start, end)) continue
+
       // Validate match (some patterns may have false positives)
-      if (isValidMatch(type, match[0], text, match.index || 0)) {
-        detectedItems.push({
+      if (isValidMatch(type, match[0], text, start)) {
+        addDetectedItem({
           type,
           value: maskSensitiveValue(type, match[0]),
           originalValue: match[0],
           severity: config.severity,
-          position: match.index || 0,
+          position: start,
           suggestion: config.suggestion
         })
-
 
         // Calculate risk score
         if (config.severity === 'high') riskScore += 30
@@ -347,12 +409,12 @@ function classifyCompliance(items: SensitiveContentResult['detectedItems']): str
     }
 
     // GDPR - General Data Protection (PII)
-    if (type.includes('email') || type.includes('phone') || type.includes('ssn') || type.includes('aadhaar') || type.includes('pan') || type.includes('passport') || type.includes('license') || type.includes('pii')) {
+    if (type.includes('email') || type.includes('phone') || type.includes('ssn') || type.includes('aadhaar') || type.includes('pan') || type.includes('passport') || type.includes('license') || type.includes('pii') || type.includes('address') || type.includes('zip') || type.includes('postal') || type.includes('pincode') || type.includes('street')) {
       classifications.add('GDPR')
     }
 
     // Additional India Privacy - PDPB (Personal Data Protection)
-    if (type.includes('aadhaar') || type.includes('pan') || type.includes('upi') || type.includes('voter')) {
+    if (type.includes('aadhaar') || type.includes('pan') || type.includes('upi') || type.includes('voter') || type.includes('indian') && (type.includes('address') || type.includes('pincode'))) {
       classifications.add('PDPB-India')
     }
 
@@ -374,7 +436,7 @@ function classifyCompliance(items: SensitiveContentResult['detectedItems']): str
 
 
 // Mask sensitive values for display
-function maskSensitiveValue(type: string, value: string): string {
+export function maskSensitiveValue(type: string, value: string): string {
   switch (type) {
     case 'email':
       const [local, domain] = value.split('@')
@@ -476,12 +538,39 @@ function maskSensitiveValue(type: string, value: string): string {
 // Validate matches to reduce false positives
 function isValidMatch(type: string, value: string, fullText: string, position: number): boolean {
   switch (type) {
+    case 'email':
+      // Email validation - ensure it's a valid email format
+      // Pattern already ensures basic format, but add extra checks
+      const emailParts = value.split('@')
+      if (emailParts.length !== 2) return false
+      const [local, domain] = emailParts
+      // Local part should not be empty, domain should have at least one dot
+      if (!local || local.length === 0) return false
+      if (!domain || !domain.includes('.')) return false
+      // Domain should end with valid TLD (2+ characters)
+      const tld = domain.split('.').pop()
+      if (!tld || tld.length < 2) return false
+      return true
     case 'ssn':
       // SSN must have dashes OR be in context that suggests it's an SSN
       // Pattern matches both "123-45-6789" and "123456789", but we want to prefer dashed format
       if (value.includes('-')) {
-        // Has dashes - definitely an SSN
-        return true
+        // Has dashes - check format: must be XXX-XX-XXXX (not YYYY-YYYY like "2025-2026")
+        const parts = value.split('-')
+        if (parts.length === 3) {
+          // Must be 3-2-4 format (SSN), not 4-4 format (year range)
+          if (parts[0].length === 3 && parts[1].length === 2 && parts[2].length === 4) {
+            return true
+          }
+        }
+        // If it's 4-4 format (like "2025-2026"), it's likely a year range, not SSN
+        if (parts.length === 2 && parts[0].length === 4 && parts[1].length === 4) {
+          // Check if it looks like a year (starts with 19 or 20)
+          if (/^(19|20)\d{2}$/.test(parts[0]) && /^(19|20)\d{2}$/.test(parts[1])) {
+            return false // Year range, not SSN
+          }
+        }
+        return false
       }
       // No dashes - check context to see if it's mentioned as SSN
       const ssnContext = fullText.substring(Math.max(0, position - 50), position + 50).toLowerCase()
@@ -529,7 +618,7 @@ function isValidMatch(type: string, value: string, fullText: string, position: n
       // Aadhaar must be in context mentioning aadhaar/uidai
       const aadhaarContext = fullText.substring(Math.max(0, position - 50), position + 50).toLowerCase()
       return /aadhaar|aadhar|uidai|unique\s+id/.test(aadhaarContext)
-    case 'pan':
+    case 'pan': {
       // PAN must match exact format: 5 letters + 4 digits + 1 letter
       const panMatch = value.match(/^[A-Z]{5}\d{4}[A-Z]$/i)
       if (panMatch) return true
@@ -537,6 +626,7 @@ function isValidMatch(type: string, value: string, fullText: string, position: n
       // Or in context mentioning PAN
       const panContext = fullText.substring(Math.max(0, position - 50), position + 50).toLowerCase()
       return /pan|permanent\s+account|pan\s+card/.test(panContext)
+    }
     case 'voterId':
       // Voter ID must match format: 3 letters + 7 digits
       const voterMatch = value.match(/^[A-Z]{3}\d{7}$/i)
@@ -588,15 +678,28 @@ function isValidMatch(type: string, value: string, fullText: string, position: n
       // Product key must be in context mentioning key/activation/license/product
       const productContext = fullText.substring(Math.max(0, position - 100), position + 100).toLowerCase()
       return /key|activation|license|product|serial|windows|office|software/.test(productContext)
-    case 'panStandalone':
-      // Standalone PAN check - context is preferred but regex is strong
-      const psContext = fullText.substring(Math.max(0, position - 50), position + 50).toLowerCase()
-      // If regex matches precisely [A-Z]{5}\d{4}[A-Z], it's high confidence
-      // But we still check if it's wrapped in other random letters to avoid false positives
+    case 'panStandalone': {
+      // Standalone PAN check - must be exact format: 5 letters + 4 digits + 1 letter
+      // Pattern: [A-Z]{5}\d{4}[A-Z]
+      const panStandaloneMatch = value.match(/^[A-Z]{5}\d{4}[A-Z]$/i)
+      if (!panStandaloneMatch) return false
+
+      // Additional validation: Check context to avoid false positives with common names
+      // If it's in a name context (like "VISHESH KUMAR JHA"), it's likely not a PAN
+      const psContext = fullText.substring(Math.max(0, position - 100), position + 100).toLowerCase()
+      const nameKeywords = ['name', 'father', 'mother', 'assessee', 'applicant', 'person', 'individual']
+      if (nameKeywords.some(keyword => psContext.includes(keyword))) {
+        // In name context - likely a false positive (common Indian names can match PAN format)
+        // Only flag if there's explicit PAN context
+        return /pan|permanent\s+account|pan\s+card|pan\s+number|tax\s+id|income\s+tax/.test(psContext)
+      }
+
+      // Check if it's wrapped in other random letters to avoid false positives
       const before = fullText[position - 1] || ' '
       const after = fullText[position + value.length] || ' '
       if (/[A-Z0-9]/i.test(before) || /[A-Z0-9]/i.test(after)) return false
       return true
+    }
     case 'aadhaarStandalone':
       // Standalone Aadhaar check - context is mandatory for 12-digit numbers
       const asContext = fullText.substring(Math.max(0, position - 60), position + 60).toLowerCase()
