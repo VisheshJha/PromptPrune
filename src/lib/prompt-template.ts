@@ -8,11 +8,11 @@
  * This template is framework-friendly and helps users structure their prompts
  */
 export function generateFirstPromptTemplate(): string {
-  return `Role: [expert type]
-Task: [action]
-Topic: [subject]
-Format: [output format]
-Tone: [tone]`
+  return `Role: 
+Task: 
+Context: 
+Format: 
+Tone: `
 }
 
 /**
@@ -22,10 +22,10 @@ Tone: [tone]`
  */
 export function generateFollowUpTemplate(): string {
   // Simple template for follow-ups (Role already established in first prompt)
-  return `Task: [action]
-Topic: [subject]
-Format: [output format]
-Tone: [tone]`
+  return `Task: 
+Context: 
+Format: 
+Tone: `
 }
 
 /**
