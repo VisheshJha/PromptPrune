@@ -631,7 +631,7 @@ function handleMenuAction(action: string, textArea: HTMLTextAreaElement | HTMLDi
           // STAGE 6: Remove all text nodes recursively
           const removeAllTextNodes = (node: Node) => {
             if (node.nodeType === Node.TEXT_NODE) {
-              node.remove()
+              node.parentNode?.removeChild(node)
             } else {
               Array.from(node.childNodes).forEach(removeAllTextNodes)
             }
@@ -1181,10 +1181,10 @@ async function shortenPrompt(textArea: HTMLTextAreaElement | HTMLDivElement | HT
       const allCompressed: number[] = []
 
       Object.values(originalCounts).forEach(providerCounts => {
-        providerCounts.forEach(count => allOriginal.push(count.count))
+        providerCounts.forEach((count: { count: number }) => allOriginal.push(count.count))
       })
       Object.values(compressedCounts).forEach(providerCounts => {
-        providerCounts.forEach(count => allCompressed.push(count.count))
+        providerCounts.forEach((count: { count: number }) => allCompressed.push(count.count))
       })
 
       originalTokens = allOriginal.length > 0
@@ -2055,7 +2055,7 @@ function showSensitiveContentWarning(
             { type: 'AUDIT_LOG', data: logData },
             (response) => {
               if (chrome.runtime.lastError) {
-                const error = chrome.runtime.lastError.message
+                const error = chrome.runtime.lastError.message || 'Unknown error'
                 console.error("❌ Failed to send audit log via service worker:", error)
                 if (error.includes("Receiving end does not exist")) {
                   console.error("💡 Service worker is not active. Try:")
@@ -2930,12 +2930,13 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
         submitButton.removeEventListener("click", existingListener, { capture: true } as any)
       }
 
-      const listener = (e: Event) => {
+      const listener = async (e: Event) => {
         const currentText = getText(textArea)
         console.log("[PromptPrune] Submit button clicked, text length:", currentText.length)
         console.log("[PromptPrune] Submit button event:", e.type, e.target)
 
-        if (checkAndBlockSubmission(currentText, e)) {
+        const shouldBlock = await checkAndBlockSubmission(currentText, e)
+        if (shouldBlock) {
           return false
         }
       }
@@ -2946,7 +2947,7 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
   }
 
   // Also add document-level click listener as backup to catch any submit buttons
-  const documentClickListener = (e: MouseEvent) => {
+  const documentClickListener = async (e: MouseEvent) => {
     const target = e.target as HTMLElement
     if (!target) return
 
@@ -2987,7 +2988,8 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
       if (form && (form.contains(textArea) || textArea.closest('form') === form)) {
         const currentText = getText(textArea)
         console.log("[PromptPrune] Checking textarea content for sensitive data")
-        if (checkAndBlockSubmission(currentText, e)) {
+        const shouldBlock = await checkAndBlockSubmission(currentText, e)
+        if (shouldBlock) {
           return false
         }
       } else {
@@ -2997,7 +2999,8 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
         if (textAreaContainer && buttonContainer && textAreaContainer === buttonContainer) {
           const currentText = getText(textArea)
           console.log("[PromptPrune] Checking textarea in same container")
-          if (checkAndBlockSubmission(currentText, e)) {
+          const shouldBlock = await checkAndBlockSubmission(currentText, e)
+          if (shouldBlock) {
             return false
           }
         }
@@ -3825,7 +3828,12 @@ function attachGlobalSensitiveContentListeners() {
           clearedTextAreaIds.delete(stableId)
         }
 
-        const text = getText(activeEl as HTMLElement)
+        // Type guard to ensure activeEl is the correct type
+        if (!(activeEl instanceof HTMLTextAreaElement || activeEl instanceof HTMLDivElement || activeEl instanceof HTMLInputElement)) {
+          return
+        }
+
+        const text = getText(activeEl)
         const textTrimmed = text?.trim() || ''
         if (textTrimmed.length > 0) {
           // Debounce: Skip if we just processed the same text for this textarea within 500ms

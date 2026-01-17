@@ -60,8 +60,13 @@ const DETECTION_PATTERNS = {
   },
   ipAddress: {
     pattern: /\b(?:\d{1,3}\.){3}\d{1,3}\b/g,
-    severity: 'low' as const,
-    suggestion: '⚠️ IP address detected - Consider removing if internal/private'
+    severity: 'medium' as const,
+    suggestion: '⚠️ IP address detected - Infrastructure exposure risk'
+  },
+  ipv6Address: {
+    pattern: /\b(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}\b|\b(?:[0-9a-fA-F]{1,4}:){1,7}:|\b::(?:[0-9a-fA-F]{1,4}:){0,6}[0-9a-fA-F]{1,4}\b/g,
+    severity: 'medium' as const,
+    suggestion: '⚠️ IPv6 address detected - Infrastructure exposure risk'
   },
   localhost: {
     pattern: /\b(?:localhost|127\.0\.0\.1|0\.0\.0\.0|::1|.+\.local|.+\.test|.+\.example|.+\.internal)\b/gi,
@@ -259,6 +264,83 @@ const DETECTION_PATTERNS = {
     pattern: /\b(?:address\s*[:=]\s*)?\d+[\s,]+[A-Za-z0-9\s,.-]+(?:,\s*[A-Za-z0-9\s,.-]+){2,}(?:,\s*[A-Z]{2,})*\b/gi,
     severity: 'high' as const,
     suggestion: '🚨 Partial address detected - DO NOT SHARE - Privacy violation risk (GDPR/PDPB-India)'
+  },
+
+  // Indian Cities and Districts
+  indianCityDistrict: {
+    pattern: /\b(?:Mumbai|Bombay|Delhi|New\s+Delhi|Bangalore|Bengaluru|Hyderabad|Chennai|Madras|Kolkata|Calcutta|Ahmedabad|Pune|Surat|Jaipur|Lucknow|Kanpur|Nagpur|Indore|Thane|Bhopal|Visakhapatnam|Vizag|Pimpri-Chinchwad|Patna|Vadodara|Baroda|Ghaziabad|Ludhiana|Agra|Nashik|Faridabad|Meerut|Rajkot|Kalyan-Dombivli|Vasai-Virar|Varanasi|Srinagar|Dhanbad|Jodhpur|Amritsar|Raipur|Allahabad|Prayagraj|Coimbatore|Jabalpur|Gwalior|Vijayawada|Madurai|Guwahati|Chandigarh|Hubli-Dharwad|Amroha|Moradabad|Mysore|Mysuru|Bareilly|Gurgaon|Gurugram|Aligarh|Jalandhar|Tiruchirappalli|Trichy|Bhubaneswar|Salem|Mira-Bhayandar|Thiruvananthapuram|Trivandrum|Bhiwandi|Saharanpur|Guntur|Bikaner|Amravati|Noida|Jamshedpur|Bhilai|Cuttack|Firozabad|Kochi|Cochin|Nellore|Bhavnagar|Dehradun|Durgapur|Asansol|Rourkela|Nanded|Kolhapur|Ajmer|Akola|Gulbarga|Jamnagar|Ujjain|Loni|Siliguri|Jhansi|Ulhasnagar|Jammu|Sangli-Miraj|Mangalore|Erode|Belgaum|Belagavi|Ambattur|Tirunelveli|Malegaon|Gaya|Jalgaon|Udaipur|Maheshtala|Davanagere|Kozhikode|Calicut|Kurnool|Rajpur\s+Sonarpur|Rajahmundry|Bokaro|South\s+Dumdum|Bellary|Patiala|Gopalpur|Agartala|Bhagalpur|Muzaffarnagar|Bhatpara|Panihati|Latur|Dhule|Rohtak|Korba|Bhilwara|Berhampur|Muzaffarpur|Ahmednagar|Mathura|Kollam|Quilon|Avadi|Kadapa|Cuddapah|Kamarhati|Sambalpur|Bilaspur|Shahjahanpur|Satara|Bijapur|Rampur|Shivamogga|Shimoga|Chandrapur|Junagadh|Thrissur|Alwar|Bardhaman|Budaun|Kulti|Kakinada|Nizamabad|Parbhani|Tumkur|Khammam|Ozhukarai|Punjab|Bihar|Ratlam|Kirari\s+Suleman\s+Nagar|Kavali|Raichur|Kota|Haora|Udaipur\s+Tripura|Karimnagar|Etawah|Dewas|Chhapra|Haldwani|Katihar|Dombivli|Virar|Anantapur|Karnal|Bathinda|Jalna|Barasat|Purnia|Satna|Farrukhabad|Sagar|Rourkela|Durg|Imphal|Shimla|Ratlam|Hapur|Ranipet|Arrah|Nagercoil|Thanjavur|District\s+[A-Z][a-z]+)\b/gi,
+    severity: 'medium' as const,
+    suggestion: '⚠️ Indian city/district detected - Consider removing for privacy (PDPB-India)'
+  },
+
+  // Indian States
+  indianState: {
+    pattern: /\b(?:Maharashtra|MH|Delhi|DL|Karnataka|KA|Tamil\s+Nadu|TN|Uttar\s+Pradesh|UP|Gujarat|GJ|Rajasthan|RJ|West\s+Bengal|WB|Madhya\s+Pradesh|MP|Andhra\s+Pradesh|AP|Telangana|TS|TG|Bihar|BR|Odisha|OR|Orissa|Haryana|HR|Kerala|KL|Jharkhand|JH|Assam|AS|Punjab|PB|Chhattisgarh|CG|CT|Jammu\s+and\s+Kashmir|J&K|JK|Uttarakhand|UK|UR|Himachal\s+Pradesh|HP|Goa|GA|Tripura|TR|Meghalaya|ML|Manipur|MN|Nagaland|NL|Sikkim|SK|Mizoram|MZ|Arunachal\s+Pradesh|AR|Puducherry|Pondicherry|PY|Chandigarh|CH|Dadra\s+and\s+Nagar\s+Haveli|DN|Daman\s+and\s+Diu|DD|Andaman\s+and\s+Nicobar|AN|Lakshadweep|LD|Ladakh|LA)\b/gi,
+    severity: 'medium' as const,
+    suggestion: '⚠️ Indian state detected - Consider removing for privacy (PDPB-India)'
+  },
+
+  // Countries (in address context)
+  country: {
+    pattern: /\b(?:India|United\s+States|USA|U\.S\.A\.|United\s+Kingdom|UK|U\.K\.|Canada|Australia|Germany|France|Japan|China|Brazil|Russia|South\s+Africa|Mexico|Italy|Spain|Netherlands|Switzerland|Sweden|Singapore|Malaysia|Thailand|Indonesia|Philippines|Vietnam|Bangladesh|Pakistan|Sri\s+Lanka|Nepal|Bhutan|Afghanistan|Myanmar|Burma)\b/gi,
+    severity: 'medium' as const,
+    suggestion: '⚠️ Country name detected - May be part of address (Privacy Risk)'
+  },
+
+  // MAC Address
+  macAddress: {
+    pattern: /\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b/g,
+    severity: 'medium' as const,
+    suggestion: '⚠️ MAC address detected - Hardware identifier leak risk'
+  },
+
+  // Docker Registry Credentials
+  dockerRegistry: {
+    pattern: /\b(?:docker\s+login|registry\.hub\.docker\.com|registry-1\.docker\.io|ghcr\.io|gcr\.io|[a-z0-9-]+\.azurecr\.io|[a-z0-9-]+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com)\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 Docker registry URL detected - Container registry exposure risk'
+  },
+
+  // Kubernetes Tokens
+  kubernetesToken: {
+    pattern: /\b(?:kubeconfig|kubectl|kubernetes-admin|service-account-token|K8S_TOKEN|KUBE_TOKEN|eyJhbGciOiJSUzI1NiIsImtpZCI6)\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 Kubernetes credential/token detected - NEVER SHARE - Cluster breach risk'
+  },
+
+  // OAuth Client Secrets
+  oauthSecret: {
+    pattern: /\b(?:client_secret|client-secret|oauth_secret|oauth-secret|consumer_secret|consumer-secret)\s*[:=]\s*['"]?[A-Za-z0-9_-]{20,}['"]?\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 OAuth client secret detected - NEVER SHARE - Authentication breach risk'
+  },
+
+  // Azure Keys
+  azureKey: {
+    pattern: /\b(?:DefaultEndpointsProtocol=https;AccountName=[a-z0-9]+;AccountKey=[A-Za-z0-9+/=]{88}|SharedAccessSignature=sv=[0-9]{4}-[0-9]{2}-[0-9]{2}|AZURE_STORAGE_KEY|AZURE_CLIENT_SECRET)\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 Azure credential detected - NEVER SHARE - Cloud infrastructure breach risk'
+  },
+
+  // GCP Service Account
+  gcpServiceAccount: {
+    pattern: /\b(?:[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com|"type":\s*"service_account"|"private_key_id":|GOOGLE_APPLICATION_CREDENTIALS)\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 GCP service account detected - NEVER SHARE - Cloud infrastructure breach risk'
+  },
+
+  // CI/CD Tokens
+  cicdToken: {
+    pattern: /\b(?:JENKINS_TOKEN|GITLAB_TOKEN|CIRCLE_TOKEN|TRAVIS_TOKEN|GITHUB_TOKEN|BITBUCKET_TOKEN|DRONE_TOKEN)\s*[:=]\s*['"]?[A-Za-z0-9_-]{20,}['"]?\b/gi,
+    severity: 'high' as const,
+    suggestion: '🚨 CI/CD token detected - NEVER SHARE - Build pipeline breach risk'
+  },
+
+  // Internal Hostnames
+  internalHostname: {
+    pattern: /\b(?:prod-[a-z0-9-]+-[0-9]+|staging-[a-z0-9-]+-[0-9]+|dev-[a-z0-9-]+-[0-9]+|[a-z0-9-]+-db-[0-9]+|[a-z0-9-]+-api-[0-9]+|[a-z0-9-]+-server-[0-9]+)\.(?:internal|local|corp|private)\b/gi,
+    severity: 'medium' as const,
+    suggestion: '⚠️ Internal hostname detected - Infrastructure naming exposure risk'
   }
 }
 
