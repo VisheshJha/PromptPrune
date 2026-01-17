@@ -90,25 +90,137 @@ if (!contentScriptFile) {
 
 // Update content_scripts matches to include all platforms
 const allMatches = [
+  // Major AI Chat Platforms
   "https://chat.openai.com/*",
   "https://chatgpt.com/*",
+  "https://www.chatgpt.com/*",
   "https://claude.ai/*",
+  "https://www.claude.ai/*",
+  "https://console.anthropic.com/*",
   "https://gemini.google.com/*",
   "https://gemini.google.com/app/*",
+  "https://bard.google.com/*",
+  "https://copilot.microsoft.com/*",
+  "https://www.copilot.microsoft.com/*",
+  "https://*.copilot.microsoft.com/*",
+  "https://copilot.microsoft.com/**",
+  "https://www.bing.com/chat*",
+  "https://bing.com/chat*",
   "https://www.perplexity.ai/*",
   "https://perplexity.ai/*",
+  
+  // AI-Powered Productivity Tools
+  "https://www.canva.com/*",
+  "https://canva.com/*",
+  "https://www.notion.so/*",
+  "https://notion.so/*",
+  "https://www.jasper.ai/*",
+  "https://jasper.ai/*",
+  "https://www.copy.ai/*",
+  "https://copy.ai/*",
+  "https://www.grammarly.com/*",
+  "https://grammarly.com/*",
+  "https://www.quillbot.com/*",
+  "https://quillbot.com/*",
+  "https://www.wordtune.com/*",
+  "https://wordtune.com/*",
+  "https://www.rytr.me/*",
+  "https://rytr.me/*",
+  "https://writesonic.com/*",
+  "https://www.writesonic.com/*",
+  
+  // AI Development Tools
+  "https://github.com/*",
+  "https://cursor.sh/*",
+  "https://www.cursor.sh/*",
+  "https://codeium.com/*",
+  "https://www.codeium.com/*",
+  "https://www.tabnine.com/*",
+  "https://tabnine.com/*",
+  "https://replit.com/*",
+  "https://www.replit.com/*",
+  "https://sourcegraph.com/*",
+  "https://www.sourcegraph.com/*",
+  
+  // AI Research & Analysis
+  "https://elicit.com/*",
+  "https://www.elicit.com/*",
+  "https://consensus.app/*",
+  "https://www.consensus.app/*",
+  "https://www.scholarcy.com/*",
+  "https://scholarcy.com/*",
+  "https://www.semanticscholar.org/*",
+  "https://semanticscholar.org/*",
+  
+  // AI Image & Design
+  "https://www.midjourney.com/*",
+  "https://midjourney.com/*",
+  "https://labs.openai.com/*",
+  "https://www.leonardo.ai/*",
+  "https://leonardo.ai/*",
+  "https://www.figma.com/*",
+  "https://figma.com/*",
+  "https://www.adobe.com/*",
+  "https://adobe.com/*",
+  "https://www.runwayml.com/*",
+  "https://runwayml.com/*",
+  
+  // AI Video & Media
+  "https://www.synthesia.io/*",
+  "https://synthesia.io/*",
+  "https://lumalabs.ai/*",
+  "https://www.lumalabs.ai/*",
+  "https://pika.art/*",
+  "https://www.pika.art/*",
+  "https://www.descript.com/*",
+  "https://descript.com/*",
+  
+  // AI Business & Marketing Tools
+  "https://surferseo.com/*",
+  "https://www.surferseo.com/*",
+  "https://www.frase.io/*",
+  "https://frase.io/*",
+  "https://outranking.io/*",
+  "https://www.outranking.io/*",
+  "https://anyword.com/*",
+  "https://www.anyword.com/*",
+  
+  // AI Platforms & APIs
+  "https://character.ai/*",
+  "https://www.character.ai/*",
+  "https://huggingface.co/*",
+  "https://*.huggingface.co/*",
+  "https://replicate.com/*",
+  "https://www.replicate.com/*",
+  "https://platform.openai.com/*",
+  "https://aistudio.google.com/*",
+  "https://cohere.com/*",
+  "https://www.cohere.com/*",
+  "https://www.ai21.com/*",
+  "https://ai21.com/*",
+  "https://you.com/*",
+  "https://www.you.com/*",
   "https://poe.com/*",
+  "https://www.poe.com/*",
+  "https://heypi.com/*",
+  "https://www.heypi.com/*",
+  "https://inflection.ai/*",
+  "https://www.inflection.ai/*",
+  "https://www.meta.ai/*",
+  "https://meta.ai/*",
   "https://grok.com/*",
+  "https://www.grok.com/*",
   "https://x.com/*",
   "https://twitter.com/*",
-  "https://copilot.microsoft.com/*",
+  "https://mistral.ai/*",
+  "https://www.mistral.ai/*",
+  "https://together.ai/*",
+  "https://www.together.ai/*",
   "https://manus.im/*",
   "https://www.deepseek.com/*",
   "https://deepseek.com/*",
-  "https://www.midjourney.com/*",
-  "https://midjourney.com/*",
-  "https://huggingface.co/*",
-  "https://*.huggingface.co/*",
+  
+  // Local development
   "http://localhost/*",
   "http://127.0.0.1/*"
 ]
@@ -184,26 +296,8 @@ requiredPermissions.forEach(perm => {
 if (!manifest.host_permissions) {
   manifest.host_permissions = []
 }
-const requiredHosts = [
-  "https://chat.openai.com/*",
-  "https://chatgpt.com/*",
-  "https://claude.ai/*",
-  "https://gemini.google.com/*",
-  "https://www.perplexity.ai/*",
-  "https://perplexity.ai/*",
-  "https://poe.com/*",
-  "https://grok.com/*",
-  "https://x.com/*",
-  "https://twitter.com/*",
-  "https://copilot.microsoft.com/*",
-  "https://manus.im/*",
-  "https://www.deepseek.com/*",
-  "https://deepseek.com/*",
-  "https://www.midjourney.com/*",
-  "https://midjourney.com/*",
-  "https://huggingface.co/*",
-  "https://*.huggingface.co/*"
-]
+// Use the same allMatches array for host_permissions
+const requiredHosts = allMatches
 requiredHosts.forEach(host => {
   if (!manifest.host_permissions.includes(host)) {
     manifest.host_permissions.push(host)

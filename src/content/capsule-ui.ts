@@ -150,7 +150,7 @@ export class CapsuleUI {
   /**
    * Register event listeners
    */
-  on(event: 'optimize' | 'grammar' | 'frameworks' | 'expand' | 'mask', callback: Function) {
+  on(event: 'optimize' | 'grammar' | 'frameworks' | 'expand' | 'mask' | 'clear', callback: Function) {
     if (!this.listeners[event]) this.listeners[event] = []
     this.listeners[event].push(callback)
   }
@@ -377,7 +377,8 @@ export class CapsuleUI {
         <div class="divider"></div>
         <div class="actions">
           <button class="btn btn-danger" id="mask-btn">Mask</button>
-          <button class="btn btn-primary" id="optimize-btn">Optimize</button>
+          <button class="btn btn-danger visible" id="clear-btn" title="Clear text" style="display: block;">Clear</button>
+          <button class="btn btn-primary" id="optimize-btn" disabled style="opacity: 0.7; cursor: not-allowed;">Optimize (Soon)</button>
           <button class="btn" id="framework-btn" title="Frameworks">⌘</button>
         </div>
       </div>
@@ -394,8 +395,10 @@ export class CapsuleUI {
 
     optimizeBtn?.addEventListener('click', (e) => {
       e.stopPropagation()
-      if (this.isLocked) return
-      this.emit('optimize')
+      // Disabled temporarily
+      return
+      // if (this.isLocked) return
+      // this.emit('optimize')
     })
 
     frameworkBtn?.addEventListener('click', (e) => {
@@ -408,6 +411,14 @@ export class CapsuleUI {
       e.stopPropagation()
       if (this.isLocked) return
       this.emit('mask')
+    })
+
+    const clearBtn = this.shadowRoot.getElementById('clear-btn')
+    clearBtn?.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if (this.isLocked) return
+      // Emit clear event so content script can handle it properly
+      this.emit('clear')
     })
 
     logoBtn?.addEventListener('click', (e) => {

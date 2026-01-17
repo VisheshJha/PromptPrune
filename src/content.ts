@@ -32,25 +32,137 @@ import { getPreviewModal } from "~/content/preview-modal"
 
 export const config: PlasmoCSConfig = {
   matches: [
+    // Major AI Chat Platforms
     "https://chat.openai.com/*",
     "https://chatgpt.com/*",
+    "https://www.chatgpt.com/*",
     "https://claude.ai/*",
+    "https://www.claude.ai/*",
+    "https://console.anthropic.com/*",
     "https://gemini.google.com/*",
     "https://gemini.google.com/app/*",
+    "https://bard.google.com/*",
+    "https://copilot.microsoft.com/*",
+    "https://www.copilot.microsoft.com/*",
+    "https://*.copilot.microsoft.com/*",
+    "https://copilot.microsoft.com/**",
+    "https://www.bing.com/chat*",
+    "https://bing.com/chat*",
     "https://www.perplexity.ai/*",
     "https://perplexity.ai/*",
+
+    // AI-Powered Productivity Tools
+    "https://www.canva.com/*",
+    "https://canva.com/*",
+    "https://www.notion.so/*",
+    "https://notion.so/*",
+    "https://www.jasper.ai/*",
+    "https://jasper.ai/*",
+    "https://www.copy.ai/*",
+    "https://copy.ai/*",
+    "https://www.grammarly.com/*",
+    "https://grammarly.com/*",
+    "https://www.quillbot.com/*",
+    "https://quillbot.com/*",
+    "https://www.wordtune.com/*",
+    "https://wordtune.com/*",
+    "https://www.rytr.me/*",
+    "https://rytr.me/*",
+    "https://writesonic.com/*",
+    "https://www.writesonic.com/*",
+
+    // AI Development Tools
+    "https://github.com/*",
+    "https://cursor.sh/*",
+    "https://www.cursor.sh/*",
+    "https://codeium.com/*",
+    "https://www.codeium.com/*",
+    "https://www.tabnine.com/*",
+    "https://tabnine.com/*",
+    "https://replit.com/*",
+    "https://www.replit.com/*",
+    "https://sourcegraph.com/*",
+    "https://www.sourcegraph.com/*",
+
+    // AI Research & Analysis
+    "https://elicit.com/*",
+    "https://www.elicit.com/*",
+    "https://consensus.app/*",
+    "https://www.consensus.app/*",
+    "https://www.scholarcy.com/*",
+    "https://scholarcy.com/*",
+    "https://www.semanticscholar.org/*",
+    "https://semanticscholar.org/*",
+
+    // AI Image & Design
+    "https://www.midjourney.com/*",
+    "https://midjourney.com/*",
+    "https://labs.openai.com/*",
+    "https://www.leonardo.ai/*",
+    "https://leonardo.ai/*",
+    "https://www.figma.com/*",
+    "https://figma.com/*",
+    "https://www.adobe.com/*",
+    "https://adobe.com/*",
+    "https://www.runwayml.com/*",
+    "https://runwayml.com/*",
+
+    // AI Video & Media
+    "https://www.synthesia.io/*",
+    "https://synthesia.io/*",
+    "https://lumalabs.ai/*",
+    "https://www.lumalabs.ai/*",
+    "https://pika.art/*",
+    "https://www.pika.art/*",
+    "https://www.descript.com/*",
+    "https://descript.com/*",
+
+    // AI Business & Marketing Tools
+    "https://surferseo.com/*",
+    "https://www.surferseo.com/*",
+    "https://www.frase.io/*",
+    "https://frase.io/*",
+    "https://outranking.io/*",
+    "https://www.outranking.io/*",
+    "https://anyword.com/*",
+    "https://www.anyword.com/*",
+
+    // AI Platforms & APIs
+    "https://character.ai/*",
+    "https://www.character.ai/*",
+    "https://huggingface.co/*",
+    "https://*.huggingface.co/*",
+    "https://replicate.com/*",
+    "https://www.replicate.com/*",
+    "https://platform.openai.com/*",
+    "https://aistudio.google.com/*",
+    "https://cohere.com/*",
+    "https://www.cohere.com/*",
+    "https://www.ai21.com/*",
+    "https://ai21.com/*",
+    "https://you.com/*",
+    "https://www.you.com/*",
     "https://poe.com/*",
+    "https://www.poe.com/*",
+    "https://heypi.com/*",
+    "https://www.heypi.com/*",
+    "https://inflection.ai/*",
+    "https://www.inflection.ai/*",
+    "https://www.meta.ai/*",
+    "https://meta.ai/*",
     "https://grok.com/*",
+    "https://www.grok.com/*",
     "https://x.com/*",
     "https://twitter.com/*",
-    "https://copilot.microsoft.com/*",
+    "https://mistral.ai/*",
+    "https://www.mistral.ai/*",
+    "https://together.ai/*",
+    "https://www.together.ai/*",
     "https://manus.im/*",
     "https://www.deepseek.com/*",
     "https://deepseek.com/*",
-    "https://www.midjourney.com/*",
-    "https://midjourney.com/*",
-    "https://huggingface.co/*",
-    "https://*.huggingface.co/*",
+
+    // Local development
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
@@ -75,6 +187,30 @@ let pendingMLDetectionId = 0
 
 // Track all textareas for finding related ones (since WeakMap doesn't support .keys())
 const allTrackedTextAreas = new WeakSet<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement>()
+
+// Track cleared textareas by stable ID (persists across DOM replacements like Midjourney)
+const clearedTextAreaIds = new Set<string>()
+
+// Helper to get stable ID for a textarea
+const getStableTextAreaId = (textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement): string => {
+  // Try to get a stable identifier first
+  const textAreaId = textArea.id ||
+    textArea.getAttribute('data-id') ||
+    textArea.getAttribute('name') ||
+    textArea.getAttribute('aria-label') ||
+    (textArea as HTMLElement).getAttribute('role')
+
+  if (textAreaId) {
+    return textAreaId
+  }
+
+  // Fallback to position-based ID (less stable but works)
+  const rect = textArea.getBoundingClientRect()
+  // Use a more stable position calculation (round to nearest 10px for better matching)
+  const stableTop = Math.round(rect.top / 10) * 10
+  const stableLeft = Math.round(rect.left / 10) * 10
+  return `textarea-${stableTop}-${stableLeft}`
+}
 
 // Get bypass flag helper (needs to be accessible from showSensitiveContentWarning)
 const getBypassFlagForTextarea = (textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement) => {
@@ -412,16 +548,218 @@ function handleMenuAction(action: string, textArea: HTMLTextAreaElement | HTMLDi
       showFrameworkSelector(textArea, text)
       break
     case "clear":
-      // Clear all text in textarea
-      if (textArea instanceof HTMLTextAreaElement || textArea instanceof HTMLInputElement) {
-        textArea.value = ""
-        textArea.dispatchEvent(new Event("input", { bubbles: true }))
-        textArea.dispatchEvent(new Event("change", { bubbles: true }))
-      } else {
-        textArea.innerText = ""
-        textArea.textContent = ""
-        textArea.dispatchEvent(new Event("input", { bubbles: true }))
+      // Clear all text in textarea - handle all element types properly with maximum compatibility
+      const clearElement = (elem: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement) => {
+        if (elem instanceof HTMLTextAreaElement || elem instanceof HTMLInputElement) {
+          // Standard input/textarea clearing
+          elem.value = ""
+          elem.defaultValue = "" // Also clear default to prevent restoration
+
+          // Trigger comprehensive events for React/Vue/Angular
+          elem.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }))
+          elem.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }))
+          elem.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Backspace" }))
+          elem.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Backspace" }))
+
+          // Force React to re-render (set value descriptor)
+          try {
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set
+            const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set
+            if (elem instanceof HTMLInputElement && nativeInputValueSetter) {
+              nativeInputValueSetter.call(elem, "")
+            } else if (elem instanceof HTMLTextAreaElement && nativeTextAreaValueSetter) {
+              nativeTextAreaValueSetter.call(elem, "")
+            }
+            elem.dispatchEvent(new Event("input", { bubbles: true }))
+          } catch (e) {
+            console.warn('[PromptPrune] Native setter clear failed:', e)
+          }
+        } else if (elem instanceof HTMLElement && elem.isContentEditable) {
+          // Contenteditable div (Perplexity, Claude, etc.) - NUCLEAR option
+          elem.focus()
+
+          // STAGE 1: Selection-based clearing
+          const selection = window.getSelection()
+          if (selection) {
+            try {
+              const range = document.createRange()
+              range.selectNodeContents(elem)
+              selection.removeAllRanges()
+              selection.addRange(range)
+              selection.deleteFromDocument()
+              selection.removeAllRanges()
+            } catch (e) {
+              console.warn('[PromptPrune] Selection clear failed:', e)
+            }
+          }
+
+          // STAGE 2: DOM manipulation clearing (most aggressive)
+          while (elem.firstChild) {
+            elem.removeChild(elem.firstChild)
+          }
+          elem.innerHTML = ""
+          elem.innerText = ""
+          elem.textContent = ""
+
+          // STAGE 3: Clear nested contenteditable children (Perplexity nested structure)
+          const nestedEditables = elem.querySelectorAll('[contenteditable="true"]')
+          nestedEditables.forEach((nested: Element) => {
+            if (nested instanceof HTMLElement && nested !== elem) {
+              while (nested.firstChild) {
+                nested.removeChild(nested.firstChild)
+              }
+              nested.innerHTML = ""
+              nested.innerText = ""
+              nested.textContent = ""
+            }
+          })
+
+          // STAGE 4: Try execCommand (legacy browser support)
+          try {
+            document.execCommand('selectAll', false)
+            document.execCommand('delete', false)
+            document.execCommand('removeFormat', false)
+          } catch (e) {
+            // execCommand may not be available
+          }
+
+          // STAGE 5: Insert and remove placeholder to reset DOM state
+          const placeholder = document.createTextNode('')
+          elem.appendChild(placeholder)
+          placeholder.remove()
+
+          // STAGE 6: Remove all text nodes recursively
+          const removeAllTextNodes = (node: Node) => {
+            if (node.nodeType === Node.TEXT_NODE) {
+              node.remove()
+            } else {
+              Array.from(node.childNodes).forEach(removeAllTextNodes)
+            }
+          }
+          removeAllTextNodes(elem)
+
+          // STAGE 7: Force re-render by toggling contenteditable
+          try {
+            elem.contentEditable = "false"
+            elem.contentEditable = "true"
+          } catch (e) {
+            // May fail in some cases
+          }
+
+          // STAGE 8: Trigger comprehensive event cascade for frameworks
+          const triggerEvents = () => {
+            // beforeinput (modern frameworks)
+            try {
+              const beforeInputEvent = new InputEvent("beforeinput", {
+                bubbles: true,
+                cancelable: true,
+                inputType: "deleteContent",
+                data: null
+              })
+              elem.dispatchEvent(beforeInputEvent)
+            } catch (e) { }
+
+            // input event (CRITICAL for React/Vue/Angular)
+            const inputEvent = new Event("input", { bubbles: true, cancelable: true })
+            Object.defineProperty(inputEvent, 'target', { value: elem, enumerable: true })
+            elem.dispatchEvent(inputEvent)
+
+            // change event
+            const changeEvent = new Event("change", { bubbles: true, cancelable: true })
+            Object.defineProperty(changeEvent, 'target', { value: elem, enumerable: true })
+            elem.dispatchEvent(changeEvent)
+
+            // blur/focus cycle to force framework re-render
+            elem.blur()
+            setTimeout(() => elem.focus(), 10)
+
+            // Composition events for IME frameworks
+            try {
+              elem.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true }))
+            } catch (e) { }
+
+            // Keyboard events to simulate user deletion
+            elem.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Backspace" }))
+            elem.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "Backspace" }))
+          }
+
+          triggerEvents()
+          // Trigger events again after a micro-delay for stubborn frameworks
+          setTimeout(triggerEvents, 10)
+        } else {
+          // Fallback for unknown element types
+          elem.innerText = ""
+          elem.textContent = ""
+          if ('innerHTML' in elem) {
+            (elem as any).innerHTML = ""
+          }
+          if ('value' in elem) {
+            (elem as any).value = ""
+          }
+          elem.dispatchEvent(new Event("input", { bubbles: true }))
+        }
       }
+
+      // Execute initial clear
+      clearElement(textArea)
+
+      // VERIFICATION AND RETRY LOOP (handles Midjourney restoration issue)
+      const verifyClearWithRetry = (attemptCount = 0) => {
+        const currentText = getText(textArea).trim()
+        if (currentText.length > 0 && attemptCount < 5) {
+          console.log(`[PromptPrune] Clear verification failed (attempt ${attemptCount + 1}), text still present: "${currentText.substring(0, 50)}...". Retrying.`)
+
+          // More aggressive clearing on retry
+          clearElement(textArea)
+
+          // Schedule next verification with increasing delays
+          const nextDelay = 50 * Math.pow(2, attemptCount) // Exponential backoff: 50, 100, 200, 400, 800ms
+          setTimeout(() => verifyClearWithRetry(attemptCount + 1), nextDelay)
+        } else if (currentText.length > 0) {
+          console.warn(`[PromptPrune] Clear failed after 5 attempts. Platform may be restoring content.`)
+          showNotification("Clear partially successful - platform may restore content", "warning")
+        } else {
+          // Successfully cleared
+          console.log(`[PromptPrune] Clear successful after ${attemptCount} retries`)
+        }
+      }
+
+      // Start verification loop
+      setTimeout(() => verifyClearWithRetry(0), 50)
+
+      // Mark as cleared by user to prevent re-triggering
+      textArea.setAttribute("data-cleared-by-user", "true")
+
+      // Create stable ID and track it as cleared (persists across DOM replacements)
+      const stableId = getStableTextAreaId(textArea)
+      clearedTextAreaIds.add(stableId)
+
+      // Clear any stored original prompt for this textarea
+      originalPrompts.delete(textArea)
+
+      // Reset bypass flag
+      const bypassFlag = getBypassFlagForTextarea(textArea)
+      bypassFlag.bypass = false
+      if (bypassFlag.timeout) {
+        clearTimeout(bypassFlag.timeout)
+        bypassFlag.timeout = null
+      }
+
+      // Clear the cleared attribute and ID tracking when user starts typing again
+      const checkAndClearFlag = () => {
+        if (textArea.isConnected) {
+          const currentText = getText(textArea).trim()
+          if (currentText.length > 0) {
+            textArea.removeAttribute("data-cleared-by-user")
+            clearedTextAreaIds.delete(stableId)
+          } else {
+            // Still empty, check again later
+            setTimeout(checkAndClearFlag, 500)
+          }
+        }
+      }
+      setTimeout(checkAndClearFlag, 500)
+
       showNotification("Prompt cleared", "success")
       textArea.focus()
       break
@@ -2078,6 +2416,19 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
         maskSensitiveData(target)
       }
     })
+
+    capsule.on('clear', () => {
+      const target = capsule.target
+      if (target) {
+        handleMenuAction('clear', target)
+        // Update capsule state after clearing
+        setTimeout(() => {
+          const capsule = getCapsuleUI()
+          capsule.updateTokenCount(0)
+          capsule.updateSensitiveWarning(false, [])
+        }, 100)
+      }
+    })
   }
 
   // Update position on scroll/resize
@@ -3156,7 +3507,7 @@ if (typeof window !== "undefined") {
     ; (window as any).testPortalConnection = async () => {
       console.log('[PromptPrune] Testing portal connection...')
       const { authService } = await import('~/lib/auth-service')
-      
+
       const testData = {
         userEmail: 'test@example.com',
         platform: 'test',
@@ -3165,7 +3516,7 @@ if (typeof window !== "undefined") {
         riskScore: 0,
         metadata: { test: true }
       }
-      
+
       console.log('[PromptPrune] Attempting to send test data to portal...')
       await authService.sendAuditLog(testData)
       console.log('[PromptPrune] Check console above for portal connection results')
@@ -3400,9 +3751,8 @@ function attachGlobalSensitiveContentListeners() {
   // Track if we're currently processing a click/keydown to prevent concurrent processing
   let isProcessingClick = false
   let isProcessingKeydown = false
-  // Track last processed text to avoid duplicate checks
-  let lastProcessedText: string | null = null
-  let lastProcessedTime = 0
+  // Track last processed text per textarea to avoid duplicate checks
+  const lastProcessedTextMap = new WeakMap<HTMLElement, { text: string; time: number }>()
 
   const globalKeydownListener = (e: KeyboardEvent) => {
     // Skip if this is an event we manually triggered
@@ -3462,12 +3812,26 @@ function attachGlobalSensitiveContentListeners() {
           return // Allow submission, don't check sensitive content
         }
 
+        // Check if textarea was cleared by user - skip processing if so
+        const stableId = getStableTextAreaId(textArea)
+        const isCleared = textArea.hasAttribute("data-cleared-by-user") || clearedTextAreaIds.has(stableId)
+        if (isCleared) {
+          const currentText = getText(textArea).trim()
+          if (currentText.length === 0) {
+            return // Still empty, don't process
+          }
+          // User started typing again, remove the cleared flag and ID tracking
+          textArea.removeAttribute("data-cleared-by-user")
+          clearedTextAreaIds.delete(stableId)
+        }
+
         const text = getText(activeEl as HTMLElement)
         const textTrimmed = text?.trim() || ''
         if (textTrimmed.length > 0) {
-          // Debounce: Skip if we just processed the same text within 500ms
+          // Debounce: Skip if we just processed the same text for this textarea within 500ms
           const now = Date.now()
-          if (lastProcessedText === textTrimmed && (now - lastProcessedTime) < 500) {
+          const lastProcessed = lastProcessedTextMap.get(textArea)
+          if (lastProcessed && lastProcessed.text === textTrimmed && (now - lastProcessed.time) < 500) {
             return
           }
 
@@ -3477,10 +3841,9 @@ function attachGlobalSensitiveContentListeners() {
           e.stopPropagation()
           e.stopImmediatePropagation()
 
-          // Mark as processing and track text
+          // Mark as processing and track text per textarea
           isProcessingKeydown = true
-          lastProcessedText = textTrimmed
-          lastProcessedTime = now
+          lastProcessedTextMap.set(textArea, { text: textTrimmed, time: now })
 
 
           // Use FAST regex detection first (non-blocking), then ML if needed
@@ -3630,15 +3993,29 @@ function attachGlobalSensitiveContentListeners() {
         const text = getText(textArea)
         const textTrimmed = text?.trim() || ''
         if (textTrimmed.length > 0) {
+          // Check if textarea was cleared by user - skip processing if so
+          const stableId = getStableTextAreaId(textArea)
+          const isCleared = textArea.hasAttribute("data-cleared-by-user") || clearedTextAreaIds.has(stableId)
+          if (isCleared) {
+            const currentText = getText(textArea).trim()
+            if (currentText.length === 0) {
+              return // Still empty, don't process
+            }
+            // User started typing again, remove the cleared flag and ID tracking
+            textArea.removeAttribute("data-cleared-by-user")
+            clearedTextAreaIds.delete(stableId)
+          }
+
           // Check bypass flag if textarea is tracked
           const bypassFlag = textAreaBypassFlags.get(textArea)
           if (bypassFlag && bypassFlag.bypass) {
             return
           }
 
-          // Debounce: Skip if we just processed the same text within 500ms
+          // Debounce: Skip if we just processed the same text for this textarea within 500ms
           const now = Date.now()
-          if (lastProcessedText === textTrimmed && (now - lastProcessedTime) < 500) {
+          const lastProcessed = lastProcessedTextMap.get(textArea)
+          if (lastProcessed && lastProcessed.text === textTrimmed && (now - lastProcessed.time) < 500) {
             return
           }
 
@@ -3648,10 +4025,9 @@ function attachGlobalSensitiveContentListeners() {
           e.stopPropagation()
           e.stopImmediatePropagation()
 
-          // Mark as processing and track text
+          // Mark as processing and track text per textarea
           isProcessingClick = true
-          lastProcessedText = textTrimmed
-          lastProcessedTime = now
+          lastProcessedTextMap.set(textArea, { text: textTrimmed, time: now })
 
 
           // Use FAST regex detection first (non-blocking), then ML if needed
@@ -3881,6 +4257,12 @@ const observer = new MutationObserver(() => {
 
       // Re-attach capsule if needed
       if (!textAreaCapsules.has(textArea) && textArea.isConnected) {
+        // Check if this textarea was previously cleared (by stable ID)
+        const currentText = getText(textArea).trim()
+        if (clearedTextAreaIds.has(stableId) && currentText.length === 0) {
+          // This is a replacement for a cleared textarea - mark it as cleared
+          textArea.setAttribute("data-cleared-by-user", "true")
+        }
         initializeCapsuleForTextArea(textArea)
       }
     })

@@ -250,7 +250,7 @@ function IndexPopup() {
   const handleLogout = async () => {
     await authService.logout()
     setCurrentUser(null)
-    
+
     // Notify all content scripts that logout occurred
     try {
       chrome.tabs.query({}, (tabs) => {
@@ -318,8 +318,8 @@ function IndexPopup() {
         <button
           onClick={() => setActiveTab("analyze")}
           className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${activeTab === "analyze"
-              ? "text-primary-600 border-b-2 border-primary-600"
-              : "text-gray-600 hover:text-gray-900"
+            ? "text-primary-600 border-b-2 border-primary-600"
+            : "text-gray-600 hover:text-gray-900"
             }`}
         >
           Analyze
@@ -327,8 +327,8 @@ function IndexPopup() {
         <button
           onClick={() => setActiveTab("tokens")}
           className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${activeTab === "tokens"
-              ? "text-primary-600 border-b-2 border-primary-600"
-              : "text-gray-600 hover:text-gray-900"
+            ? "text-primary-600 border-b-2 border-primary-600"
+            : "text-gray-600 hover:text-gray-900"
             }`}
         >
           Tokens
@@ -336,8 +336,8 @@ function IndexPopup() {
         <button
           onClick={() => setActiveTab("frameworks")}
           className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${activeTab === "frameworks"
-              ? "text-primary-600 border-b-2 border-primary-600"
-              : "text-gray-600 hover:text-gray-900"
+            ? "text-primary-600 border-b-2 border-primary-600"
+            : "text-gray-600 hover:text-gray-900"
             }`}
         >
           Frameworks
@@ -345,8 +345,8 @@ function IndexPopup() {
         <button
           onClick={() => setActiveTab("savings")}
           className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${activeTab === "savings"
-              ? "text-primary-600 border-b-2 border-primary-600"
-              : "text-gray-600 hover:text-gray-900"
+            ? "text-primary-600 border-b-2 border-primary-600"
+            : "text-gray-600 hover:text-gray-900"
             }`}
         >
           Savings
@@ -354,8 +354,8 @@ function IndexPopup() {
         <button
           onClick={() => setActiveTab("history")}
           className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${activeTab === "history"
-              ? "text-primary-600 border-b-2 border-primary-600"
-              : "text-gray-600 hover:text-gray-900"
+            ? "text-primary-600 border-b-2 border-primary-600"
+            : "text-gray-600 hover:text-gray-900"
             }`}
         >
           History
@@ -363,8 +363,8 @@ function IndexPopup() {
         <button
           onClick={() => setActiveTab("tests")}
           className={`flex-shrink-0 px-4 py-3 text-sm font-medium transition-colors ${activeTab === "tests"
-              ? "text-primary-600 border-b-2 border-primary-600"
-              : "text-gray-600 hover:text-gray-900"
+            ? "text-primary-600 border-b-2 border-primary-600"
+            : "text-gray-600 hover:text-gray-900"
             }`}
         >
           🧪 Tests
@@ -375,9 +375,27 @@ function IndexPopup() {
       <div className="p-6 bg-gray-50">
         {/* Prompt Input */}
         <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Your Prompt
-          </label>
+          <div className="flex justify-between items-center mb-2">
+            <label className="block text-sm font-medium text-gray-700">
+              Your Prompt
+            </label>
+            <button
+              onClick={() => {
+                setPrompt("")
+                setOptimizedPrompt("")
+                if (typeof window !== 'undefined') {
+                  localStorage.removeItem('promptprune_last_prompt')
+                }
+              }}
+              className="text-xs text-gray-500 hover:text-red-600 flex items-center gap-1 transition-colors"
+              title="Clear prompt and history"
+            >
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+              Clear
+            </button>
+          </div>
           <textarea
             value={prompt}
             onChange={(e) => {
