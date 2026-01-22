@@ -62,7 +62,7 @@ export function OptimizedPromptModal({
   }, [onClose])
 
   return (
-    <div 
+    <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm"
       onClick={(e) => {
         // Close on backdrop click
@@ -71,14 +71,18 @@ export function OptimizedPromptModal({
         }
       }}
     >
-      <div 
+      <div
         className="bg-white rounded-lg shadow-lg border border-gray-200 w-full max-w-2xl max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-labelledby="modal-title"
+        aria-modal="true"
       >
         {/* Header - Material Design */}
         <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
           <div className="flex-1">
-            <h2 className="text-xl font-normal text-gray-900">Analyzed Prompt</h2>
+            {/* Visually hidden but required for accessibility scanners and screen readers */}
+            <h2 id="modal-title" className="text-xl font-normal text-gray-900">Analyzed Prompt</h2>
             <div className="flex items-center gap-3 mt-2">
               {stats && (
                 <p className="text-xs text-gray-600">
@@ -143,7 +147,7 @@ export function OptimizedPromptModal({
             className="w-full h-full min-h-[300px] p-4 text-sm border border-gray-300 rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white font-mono leading-relaxed"
             onClick={(e) => {
               // Select all text on click
-              ;(e.target as HTMLTextAreaElement).select()
+              ; (e.target as HTMLTextAreaElement).select()
             }}
           />
         </div>

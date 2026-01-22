@@ -212,11 +212,14 @@ export function createPromptGuideModal(textArea: HTMLTextAreaElement | HTMLDivEl
 
   const content = document.createElement("div")
   content.className = "modal-content"
+  content.setAttribute("role", "dialog")
+  content.setAttribute("aria-labelledby", "guide-title")
+  content.setAttribute("aria-modal", "true")
 
   const header = document.createElement("div")
   header.className = "modal-header"
   header.innerHTML = `
-    <h2 class="modal-title">✨ Build Better Prompt</h2>
+    <h2 class="modal-title" id="guide-title">✨ Build Better Prompt</h2>
     <button class="modal-close" aria-label="Close">×</button>
   `
 
@@ -272,7 +275,7 @@ function handleApply(
   // Get final template
   const template = shadowRoot.querySelector("#guide-template") as HTMLTextAreaElement
   let finalPrompt = template?.value.trim() || ""
-  
+
   // If template is empty, build from components
   if (!finalPrompt) {
     const components: Record<string, string> = {}
@@ -287,7 +290,7 @@ function handleApply(
     // Convert template format to natural prompt
     finalPrompt = convertTemplateToPrompt(finalPrompt)
   }
-  
+
   if (finalPrompt) {
     if (textArea instanceof HTMLTextAreaElement || textArea instanceof HTMLInputElement) {
       textArea.value = finalPrompt
@@ -296,10 +299,10 @@ function handleApply(
     }
     textArea.dispatchEvent(new Event("input", { bubbles: true }))
     textArea.dispatchEvent(new Event("change", { bubbles: true }))
-    
+
     // Focus the textarea
     textArea.focus()
-    
+
     // Close modal
     const modal = shadowRoot.host as HTMLElement
     if (modal) {
@@ -324,10 +327,10 @@ export function updatePromptGuide(
   const analysis = analyzePromptComponents(prompt, isFollowUp)
 
   // Get required and optional components
-  const requiredComponents = PROMPT_COMPONENTS.filter(comp => 
+  const requiredComponents = PROMPT_COMPONENTS.filter(comp =>
     comp.required && (!isFollowUp || comp.id !== "role")
   )
-  const optionalComponents = PROMPT_COMPONENTS.filter(comp => 
+  const optionalComponents = PROMPT_COMPONENTS.filter(comp =>
     !comp.required && (!isFollowUp || comp.id !== "role")
   )
 
@@ -341,13 +344,13 @@ export function updatePromptGuide(
   // Build template preview - always show structure even if empty
   const buildTemplate = (values: Record<string, string>): string => {
     let template = ""
-    
+
     if (!isFollowUp) {
       template += `Role: ${values.role || "expert in the field"}\n`
     }
     template += `Action: ${values.action || "write"}\n`
     template += `Topic: ${values.topic || "the specified topic"}\n`
-    
+
     if (values.audience) {
       template += `Audience: ${values.audience}\n`
     }
@@ -366,14 +369,14 @@ export function updatePromptGuide(
     if (values.context) {
       template += `Context: ${values.context}\n`
     }
-    
+
     return template.trim()
   }
 
   const body = shadowRoot.querySelector("#guide-modal-body")
   if (body) {
     const scoreClass = analysis.score >= 70 ? "score-high" : analysis.score >= 50 ? "score-medium" : "score-low"
-    
+
     body.innerHTML = `
       <div class="analysis-banner">
         <span class="score ${scoreClass}">Prompt Score: ${analysis.score}/100</span>
@@ -489,7 +492,7 @@ function convertTemplateToPrompt(template: string): string {
   // Parse template lines
   const lines = template.split("\n").filter(l => l.trim())
   const parts: Record<string, string> = {}
-  
+
   lines.forEach(line => {
     const match = line.match(/^(\w+):\s*(.+)$/i)
     if (match) {
@@ -498,7 +501,7 @@ function convertTemplateToPrompt(template: string): string {
       parts[key] = value
     }
   })
-  
+
   // Build natural prompt
   return buildPromptFromComponents(parts)
 }
@@ -508,9 +511,9 @@ function convertTemplateToPrompt(template: string): string {
  */
 function getComponentValue(prompt: string, componentId: string): string {
   if (!prompt || !prompt.trim()) return ""
-  
+
   const lowerPrompt = prompt.toLowerCase()
-  
+
   switch (componentId) {
     case "role": {
       // Try multiple patterns

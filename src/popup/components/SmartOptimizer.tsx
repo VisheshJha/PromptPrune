@@ -38,7 +38,7 @@ export function SmartOptimizer({ originalPrompt, onOptimized, onFrameworkSelecte
     // Rank frameworks to find the best fit
     rankFrameworks(originalPrompt).then(rankings => {
       const topRanked = rankings.length > 0 ? rankings[0] : null
-      
+
       if (topRanked) {
         setBestFitFramework(topRanked.framework)
         // Auto-select best fit if no manual selection exists
@@ -93,7 +93,7 @@ export function SmartOptimizer({ originalPrompt, onOptimized, onFrameworkSelecte
         setAnalyzed(frameworkPrompt)
         onOptimized(frameworkPrompt)
         setShowModal(true)
-        
+
         // Track savings with framework output
         try {
           const [originalCounts, frameworkCounts] = await Promise.all([
@@ -103,12 +103,12 @@ export function SmartOptimizer({ originalPrompt, onOptimized, onFrameworkSelecte
           const originalAvg = getAverageTokenCount(originalCounts)
           const frameworkAvg = getAverageTokenCount(frameworkCounts)
           const reduction = originalAvg - frameworkAvg
-          
+
           setAnalysisStats({
             reduction: reduction > 0 ? reduction : 0,
             reductionPercent: originalAvg > 0 ? Math.round((reduction / originalAvg) * 100) : 0,
           })
-          
+
           await saveOptimizationRecord(
             originalPrompt,
             frameworkPrompt,
@@ -123,12 +123,12 @@ export function SmartOptimizer({ originalPrompt, onOptimized, onFrameworkSelecte
         // Fallback: if no framework selected, use best fit
         rankFrameworks(originalPrompt).then(rankings => {
           const bestFit = rankings.length > 0 ? rankings[0] : null
-          
+
           if (bestFit) {
             setAnalyzed(bestFit.output.optimized)
             onOptimized(bestFit.output.optimized)
             setShowModal(true)
-            
+
             // Track savings
             Promise.all([
               getAllTokenCounts(originalPrompt),
@@ -137,12 +137,12 @@ export function SmartOptimizer({ originalPrompt, onOptimized, onFrameworkSelecte
               const originalAvg = getAverageTokenCount(originalCounts)
               const frameworkAvg = getAverageTokenCount(frameworkCounts)
               const reduction = originalAvg - frameworkAvg
-              
+
               setAnalysisStats({
                 reduction: reduction > 0 ? reduction : 0,
                 reductionPercent: originalAvg > 0 ? Math.round((reduction / originalAvg) * 100) : 0,
               })
-              
+
               return saveOptimizationRecord(
                 originalPrompt,
                 bestFit.output.optimized,
@@ -187,7 +187,7 @@ export function SmartOptimizer({ originalPrompt, onOptimized, onFrameworkSelecte
                 )}
               </div>
               <div className="text-xs text-gray-600">
-                {bestFitFramework 
+                {bestFitFramework
                   ? `Best fit: ${FRAMEWORKS[bestFitFramework].name} (auto-selected)`
                   : "Structure your prompt using proven frameworks"}
               </div>
@@ -218,11 +218,10 @@ export function SmartOptimizer({ originalPrompt, onOptimized, onFrameworkSelecte
                       onClick={() => {
                         setSelectedFramework(isSelected ? null : (key as FrameworkType))
                       }}
-                      className={`text-left p-2 rounded-lg border transition-all text-xs ${
-                        isSelected
+                      className={`text-left p-2 rounded-lg border transition-all text-xs ${isSelected
                           ? "bg-primary-100/80 border-primary-400 ring-1 ring-primary-300"
                           : "bg-white/50 border-white/30 hover:bg-white/70"
-                      }`}
+                        }`}
                     >
                       <div className="flex items-center gap-1.5">
                         <span>{framework.icon}</span>
@@ -319,11 +318,10 @@ export function SmartOptimizer({ originalPrompt, onOptimized, onFrameworkSelecte
           </div>
         )}
         {selectedFramework && frameworkPrompt && (
-          <div className={`mb-3 p-2 border rounded-md text-xs ${
-            bestFitFramework && selectedFramework === bestFitFramework
+          <div className={`mb-3 p-2 border rounded-md text-xs ${bestFitFramework && selectedFramework === bestFitFramework
               ? "bg-green-50 border-green-200 text-gray-700"
               : "bg-primary-50 border-primary-200 text-gray-700"
-          }`}>
+            }`}>
             <span className="font-semibold">{FRAMEWORKS[selectedFramework].name}</span> framework selected
             {bestFitFramework && selectedFramework === bestFitFramework && (
               <span className="text-green-700 ml-1 font-medium">(Best Fit - Auto-selected)</span>
@@ -339,6 +337,73 @@ export function SmartOptimizer({ originalPrompt, onOptimized, onFrameworkSelecte
           className="w-full bg-primary-600 hover:bg-primary-700 disabled:bg-gray-300 text-white font-medium py-2.5 px-4 rounded-md transition-colors shadow-sm hover:shadow disabled:shadow-none disabled:cursor-not-allowed"
         >
           {loading ? "Analyzing..." : selectedFramework ? `Analyze with ${FRAMEWORKS[selectedFramework].name.split(" ")[0]}` : "Analyze Prompt"}
+        </button>
+
+        {/* AI Optimize Button - Uses Model B (Qwen) */}
+        <button
+          onClick={async () => {
+            if (!originalPrompt.trim()) {
+              setError("Please enter a prompt to optimize");
+              return;
+            }
+
+            setLoading(true);
+            setError(null);
+
+            try {
+              // Call Model B via background worker
+              const response = await chrome.runtime.sendMessage({
+                type: "OPTIMIZE_PROMPT",
+                text: originalPrompt,
+                mode: "OPTIMIZE"
+              });
+
+              if (response.success) {
+                setAnalyzed(response.result);
+                onOptimized(response.result);
+                setShowModal(true);
+
+                // Track savings
+                try {
+                  const [originalCounts, optimizedCounts] = await Promise.all([
+                    getAllTokenCounts(originalPrompt),
+                    getAllTokenCounts(response.result),
+                  ]);
+                  const originalAvg = getAverageTokenCount(originalCounts);
+                  const optimizedAvg = getAverageTokenCount(optimizedCounts);
+                  const reduction = originalAvg - optimizedAvg;
+
+                  setAnalysisStats({
+                    reduction: reduction > 0 ? reduction : 0,
+                    reductionPercent: originalAvg > 0 ? Math.round((reduction / originalAvg) * 100) : 0,
+                  });
+
+                  await saveOptimizationRecord(
+                    originalPrompt,
+                    response.result,
+                    originalAvg,
+                    optimizedAvg,
+                    "average"
+                  );
+                } catch (err) {
+                  console.warn("Failed to track savings:", err);
+                }
+              } else {
+                setError(response.error || "AI optimization failed");
+              }
+            } catch (error) {
+              setError(error instanceof Error ? error.message : "AI optimization failed");
+            } finally {
+              setLoading(false);
+            }
+          }}
+          disabled={loading || !originalPrompt.trim()}
+          className="w-full mt-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 disabled:from-gray-300 disabled:to-gray-300 text-white font-medium py-2.5 px-4 rounded-md transition-all shadow-sm hover:shadow disabled:shadow-none disabled:cursor-not-allowed flex items-center justify-center gap-2"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+          </svg>
+          {loading ? "Optimizing with AI..." : "AI Optimize (Local Model)"}
         </button>
       </div>
 

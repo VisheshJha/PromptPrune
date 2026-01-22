@@ -38,8 +38,23 @@ export class PreviewModal {
         const originalEl = this.shadowRoot.getElementById('original-text') as HTMLTextAreaElement
         const optimizedEl = this.shadowRoot.getElementById('optimized-text') as HTMLTextAreaElement
 
-        if (originalEl) originalEl.value = original
-        if (optimizedEl) optimizedEl.value = optimized
+        console.log('[PreviewModal] show called with:', {
+            originalLength: original?.length || 0,
+            optimizedLength: optimized?.length || 0,
+            optimizedType: typeof optimized,
+            optimizedPreview: typeof optimized === 'string' ? optimized.substring(0, 50) : optimized
+        })
+
+        if (originalEl) {
+            originalEl.value = original || ''
+            console.log('[PreviewModal] Set original textarea value, length:', originalEl.value.length)
+        }
+        if (optimizedEl) {
+            // Ensure we have a valid string
+            const optimizedText = (typeof optimized === 'string' && optimized.trim()) ? optimized : original || ''
+            optimizedEl.value = optimizedText
+            console.log('[PreviewModal] Set optimized textarea value, length:', optimizedEl.value.length, 'text:', optimizedEl.value.substring(0, 50))
+        }
 
         this.element.style.pointerEvents = 'auto'
         this.element.style.opacity = '1'
@@ -219,11 +234,11 @@ export class PreviewModal {
         const container = document.createElement('div')
         container.innerHTML = `
             <div class="modal-overlay"></div>
-            <div class="modal-content">
-                <div class="header">
-                    <h2 class="title">Review Changes</h2>
-                    <button class="close-btn">&times;</button>
-                </div>
+            <div class="modal-content" role="dialog" aria-labelledby="modal-title" aria-modal="true">
+                <header class="header">
+                    <h2 class="title" id="modal-title">Review Changes</h2>
+                    <button class="close-btn" aria-label="Close">&times;</button>
+                </header>
                 <div class="body">
                     <div class="column">
                         <span class="label">Original</span>

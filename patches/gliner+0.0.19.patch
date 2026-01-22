@@ -1,0 +1,29 @@
+diff --git a/node_modules/gliner/dist/index.cjs b/node_modules/gliner/dist/index.cjs
+index d731a66..ba0f363 100644
+--- a/node_modules/gliner/dist/index.cjs
++++ b/node_modules/gliner/dist/index.cjs
+@@ -2,8 +2,8 @@
+ 
+ var transformers = require('@xenova/transformers');
+ var ort_CPU = require('onnxruntime-web');
+-var ort_WEBGPU = require('onnxruntime-web/webgpu');
+-var ort_WEBGL = require('onnxruntime-web/webgl');
++var ort_WEBGPU = require('onnxruntime-web/dist/ort.webgpu.min.js');
++var ort_WEBGL = require('onnxruntime-web/dist/ort.webgl.min.js');
+ 
+ function _interopDefault (e) { return e && e.__esModule ? e : { default: e }; }
+ 
+diff --git a/node_modules/gliner/dist/index.mjs b/node_modules/gliner/dist/index.mjs
+index 3c38429..558dbc0 100644
+--- a/node_modules/gliner/dist/index.mjs
++++ b/node_modules/gliner/dist/index.mjs
+@@ -1,7 +1,7 @@
+ import { env, AutoTokenizer } from '@xenova/transformers';
+ import ort_CPU from 'onnxruntime-web';
+-import ort_WEBGPU from 'onnxruntime-web/webgpu';
+-import ort_WEBGL from 'onnxruntime-web/webgl';
++import ort_WEBGPU from 'onnxruntime-web/dist/ort.webgpu.bundle.min.mjs';
++import ort_WEBGL from 'onnxruntime-web/dist/ort.webgl.min.mjs';
+ 
+ var __defProp = Object.defineProperty;
+ var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;

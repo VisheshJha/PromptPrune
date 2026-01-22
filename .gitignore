@@ -14,3 +14,7 @@ dist
 extension_key*.pem
 *_key_private.pem
 *.pem
+
+# Transformers assets SHOULD be committed (not ignored)
+# They're small (~2-3MB) and needed for Local Asset Bridge
+# !assets/transformers/

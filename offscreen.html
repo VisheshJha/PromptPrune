@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>PromptPrune Offscreen Model Manager</title>
+    <!-- Note: CSP is set in manifest.json, not via meta tag for Chrome extensions -->
+</head>
+<body>
+    <script type="module">
+        // The offscreen.ts will be compiled by Plasmo
+        // We need to import it using the runtime URL to ensure correct path resolution
+        const scriptUrl = chrome.runtime.getURL('static/offscreen.js');
+        console.log('[Offscreen] Attempting to load script from:', scriptUrl);
+        
+        import(scriptUrl)
+            .then(() => console.log('[Offscreen] ✅ Script loaded successfully'))
+            .catch(err => {
+                console.error('[Offscreen] ❌ Failed to load compiled script, trying fallback:', err);
+                // Fallback: try relative import (for dev mode)
+                return import('./offscreen.ts')
+                    .then(() => console.log('[Offscreen] ✅ Fallback script loaded'))
+                    .catch(e => console.error('[Offscreen] ❌ All import attempts failed:', e));
+            });
+    </script>
+</body>
+</html>

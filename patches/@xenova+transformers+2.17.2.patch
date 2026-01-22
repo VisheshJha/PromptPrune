@@ -1,0 +1,18 @@
+diff --git a/node_modules/@xenova/transformers/src/tokenizers.js b/node_modules/@xenova/transformers/src/tokenizers.js
+index 234eef1..78d1eec 100644
+--- a/node_modules/@xenova/transformers/src/tokenizers.js
++++ b/node_modules/@xenova/transformers/src/tokenizers.js
+@@ -653,8 +653,11 @@ class BPE extends TokenizerModel {
+             this.vocab[value] = key;
+         }
+ 
+-        this.bpe_ranks = new Map(config.merges.map((x, i) => [x, i]));
+-        this.merges = config.merges.map(x => x.split(this.BPE_SPLIT_TOKEN));
++        // Normalize merges: tokenizer.json can have array of strings ("a b") or array of pairs (["a","b"])
++        const toMergeStr = (x) => Array.isArray(x) ? x.join(' ') : (typeof x === 'string' ? x : String(x));
++        const mergesStrings = config.merges.map(toMergeStr);
++        this.bpe_ranks = new Map(mergesStrings.map((s, i) => [s, i]));
++        this.merges = mergesStrings.map(s => s.split(this.BPE_SPLIT_TOKEN));
+ 
+         this.end_of_word_suffix = config.end_of_word_suffix;
+ 

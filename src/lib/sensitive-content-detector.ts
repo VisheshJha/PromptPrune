@@ -273,9 +273,11 @@ const DETECTION_PATTERNS = {
     suggestion: '⚠️ Indian city/district detected - Consider removing for privacy (PDPB-India)'
   },
 
-  // Indian States
+  // Indian States - Context-aware to avoid false positives
+  // Only matches full state names or abbreviations when preceded by state-related keywords
   indianState: {
-    pattern: /\b(?:Maharashtra|MH|Delhi|DL|Karnataka|KA|Tamil\s+Nadu|TN|Uttar\s+Pradesh|UP|Gujarat|GJ|Rajasthan|RJ|West\s+Bengal|WB|Madhya\s+Pradesh|MP|Andhra\s+Pradesh|AP|Telangana|TS|TG|Bihar|BR|Odisha|OR|Orissa|Haryana|HR|Kerala|KL|Jharkhand|JH|Assam|AS|Punjab|PB|Chhattisgarh|CG|CT|Jammu\s+and\s+Kashmir|J&K|JK|Uttarakhand|UK|UR|Himachal\s+Pradesh|HP|Goa|GA|Tripura|TR|Meghalaya|ML|Manipur|MN|Nagaland|NL|Sikkim|SK|Mizoram|MZ|Arunachal\s+Pradesh|AR|Puducherry|Pondicherry|PY|Chandigarh|CH|Dadra\s+and\s+Nagar\s+Haveli|DN|Daman\s+and\s+Diu|DD|Andaman\s+and\s+Nicobar|AN|Lakshadweep|LD|Ladakh|LA)\b/gi,
+    // Match full state names OR abbreviations only when in proper context
+    pattern: /\b(?:(?:state(?:\s+of)?|from|in|at|to|located\s+in|residing\s+in|based\s+in|lives?\s+in)\s+)?(?:Maharashtra|Delhi|Karnataka|Tamil\s+Nadu|Uttar\s+Pradesh|Gujarat|Rajasthan|West\s+Bengal|Madhya\s+Pradesh|Andhra\s+Pradesh|Telangana|Bihar|Odisha|Orissa|Haryana|Kerala|Jharkhand|Punjab|Chhattisgarh|Jammu\s+and\s+Kashmir|Uttarakhand|Himachal\s+Pradesh|Goa|Tripura|Meghalaya|Manipur|Nagaland|Sikkim|Mizoram|Arunachal\s+Pradesh|Puducherry|Pondicherry|Chandigarh|Dadra\s+and\s+Nagar\s+Haveli|Daman\s+and\s+Diu|Lakshadweep|Ladakh)\b|\b(?:state\s+(?:of\s+)?|from\s+|in\s+|at\s+|to\s+)(?:MH|DL|KA|TN|UP|GJ|RJ|WB|MP|AP|TS|TG|BR|OR|HR|KL|JH|PB|CG|CT|JK|UK|UR|HP|GA|TR|ML|MN|NL|SK|MZ|AR|PY|CH|DN|DD|LD|LA)\b/gi,
     severity: 'medium' as const,
     suggestion: '⚠️ Indian state detected - Consider removing for privacy (PDPB-India)'
   },

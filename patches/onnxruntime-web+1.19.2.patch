@@ -1,0 +1,114 @@
+diff --git a/node_modules/onnxruntime-web/dist/ort.mjs b/node_modules/onnxruntime-web/dist/ort.mjs
+index 3f92535..a8c5953 100644
+--- a/node_modules/onnxruntime-web/dist/ort.mjs
++++ b/node_modules/onnxruntime-web/dist/ort.mjs
+@@ -24053,7 +24053,10 @@ var init_wasm_utils_import = __esm({
+     preload = async (absoluteUrl) => {
+       const response = await fetch(absoluteUrl, { credentials: "same-origin" });
+       const blob = await response.blob();
+-      return URL.createObjectURL(blob);
++      if (typeof URL.createObjectURL === "function")
++        return URL.createObjectURL(blob);
++      const text = await blob.text();
++      return "data:application/javascript;base64," + btoa(unescape(encodeURIComponent(text)));
+     };
+     dynamicImportDefault = async (url) => (await import(
+       /* webpackIgnore: true */
+@@ -24078,10 +24081,14 @@ var init_wasm_utils_import = __esm({
+     importWasmModule = async (urlOverride, prefixOverride, isMultiThreaded) => {
+       if (false) {
+         return [void 0, embeddedWasmModule];
+-      } else {
++      }
++      var _prov = typeof globalThis !== "undefined" && globalThis.__ORT_WASM_FACTORY;
++      if (_prov) return [void 0, _prov];
++      {
+         const wasmModuleFilename = false ? "ort-training-wasm-simd-threaded.mjs" : false ? "ort-wasm-simd-threaded.jsep.mjs" : "ort-wasm-simd-threaded.mjs";
+         const wasmModuleUrl = urlOverride ?? normalizeUrl(wasmModuleFilename, prefixOverride);
+-        const needPreload = !isNode && isMultiThreaded && wasmModuleUrl && !isSameOrigin(wasmModuleUrl, prefixOverride);
++        const isServiceWorker = typeof globalThis.ServiceWorkerGlobalScope !== 'undefined' && self instanceof globalThis.ServiceWorkerGlobalScope;
++        const needPreload = (!isNode && isMultiThreaded && wasmModuleUrl && !isSameOrigin(wasmModuleUrl, prefixOverride)) || (isServiceWorker && !!wasmModuleUrl);
+         const url = needPreload ? await preload(wasmModuleUrl) : wasmModuleUrl ?? fallbackUrl(wasmModuleFilename, prefixOverride);
+         return [needPreload ? url : void 0, await dynamicImportDefault(url)];
+       }
+diff --git a/node_modules/onnxruntime-web/dist/ort.webgpu.mjs b/node_modules/onnxruntime-web/dist/ort.webgpu.mjs
+index 085a4d2..66714ff 100644
+--- a/node_modules/onnxruntime-web/dist/ort.webgpu.mjs
++++ b/node_modules/onnxruntime-web/dist/ort.webgpu.mjs
+@@ -1572,7 +1572,10 @@ var init_wasm_utils_import = __esm({
+     preload = async (absoluteUrl) => {
+       const response = await fetch(absoluteUrl, { credentials: "same-origin" });
+       const blob = await response.blob();
+-      return URL.createObjectURL(blob);
++      if (typeof URL.createObjectURL === "function")
++        return URL.createObjectURL(blob);
++      const text = await blob.text();
++      return "data:application/javascript;base64," + btoa(unescape(encodeURIComponent(text)));
+     };
+     dynamicImportDefault = async (url) => (await import(
+       /* webpackIgnore: true */
+@@ -1597,10 +1600,14 @@ var init_wasm_utils_import = __esm({
+     importWasmModule = async (urlOverride, prefixOverride, isMultiThreaded) => {
+       if (false) {
+         return [void 0, embeddedWasmModule];
+-      } else {
++      }
++      var _prov = typeof globalThis !== "undefined" && globalThis.__ORT_WASM_FACTORY;
++      if (_prov) return [void 0, _prov];
++      {
+         const wasmModuleFilename = false ? "ort-training-wasm-simd-threaded.mjs" : true ? "ort-wasm-simd-threaded.jsep.mjs" : "ort-wasm-simd-threaded.mjs";
+         const wasmModuleUrl = urlOverride ?? normalizeUrl(wasmModuleFilename, prefixOverride);
+-        const needPreload = !isNode && isMultiThreaded && wasmModuleUrl && !isSameOrigin(wasmModuleUrl, prefixOverride);
++        const isServiceWorker = typeof globalThis.ServiceWorkerGlobalScope !== 'undefined' && self instanceof globalThis.ServiceWorkerGlobalScope;
++        const needPreload = (!isNode && isMultiThreaded && wasmModuleUrl && !isSameOrigin(wasmModuleUrl, prefixOverride)) || (isServiceWorker && !!wasmModuleUrl);
+         const url = needPreload ? await preload(wasmModuleUrl) : wasmModuleUrl ?? fallbackUrl(wasmModuleFilename, prefixOverride);
+         return [needPreload ? url : void 0, await dynamicImportDefault(url)];
+       }
+diff --git a/node_modules/onnxruntime-web/lib/wasm/wasm-utils-import.ts b/node_modules/onnxruntime-web/lib/wasm/wasm-utils-import.ts
+index f80bd71..90552ee 100644
+--- a/node_modules/onnxruntime-web/lib/wasm/wasm-utils-import.ts
++++ b/node_modules/onnxruntime-web/lib/wasm/wasm-utils-import.ts
+@@ -72,7 +72,12 @@ const fallbackUrl = (filename: string, prefixOverride?: string) => `${prefixOver
+ const preload = async(absoluteUrl: string): Promise<string> => {
+   const response = await fetch(absoluteUrl, {credentials: 'same-origin'});
+   const blob = await response.blob();
+-  return URL.createObjectURL(blob);
++  if (typeof URL.createObjectURL === 'function') {
++    return URL.createObjectURL(blob);
++  }
++  // Extension Service Workers lack URL.createObjectURL; use data URL for import().
++  const text = await blob.text();
++  return 'data:application/javascript;base64,' + btoa(unescape(encodeURIComponent(text)));
+ };
+ 
+ /**
+@@ -153,7 +158,12 @@ export const importWasmModule = async(
+     isMultiThreaded: boolean): Promise<[undefined | string, EmscriptenModuleFactory<OrtWasmModule>]> => {
+   if (BUILD_DEFS.DISABLE_DYNAMIC_IMPORT) {
+     return [undefined, embeddedWasmModule!];
+-  } else {
++  }
++  const _prov = typeof globalThis !== 'undefined' && (globalThis as any).__ORT_WASM_FACTORY;
++  if (_prov) {
++    return [undefined, _prov as EmscriptenModuleFactory<OrtWasmModule>];
++  }
++  {
+     const wasmModuleFilename = !BUILD_DEFS.DISABLE_TRAINING ? 'ort-training-wasm-simd-threaded.mjs' :
+         !BUILD_DEFS.DISABLE_JSEP                            ? 'ort-wasm-simd-threaded.jsep.mjs' :
+                                                               'ort-wasm-simd-threaded.mjs';
+@@ -168,7 +178,14 @@ export const importWasmModule = async(
+     //    preload the module.
+     // 4. the worker URL is not from the same origin.
+     //    - If the worker URL is from the same origin, we can create the worker directly.
+-    const needPreload = !isNode && isMultiThreaded && wasmModuleUrl && !isSameOrigin(wasmModuleUrl, prefixOverride);
++    // 5. In a Service Worker, dynamic import(chrome-extension://...) can fail; preload (fetch+blob) and import(blob)
++    //    avoids that.
++    const isServiceWorker =
++        typeof (globalThis as any).ServiceWorkerGlobalScope !== 'undefined' &&
++        (globalThis as any).self instanceof (globalThis as any).ServiceWorkerGlobalScope;
++    const needPreload =
++        (!isNode && isMultiThreaded && wasmModuleUrl && !isSameOrigin(wasmModuleUrl, prefixOverride)) ||
++        (isServiceWorker && !!wasmModuleUrl);
+     const url = needPreload ? (await preload(wasmModuleUrl)) :
+                               (wasmModuleUrl ?? fallbackUrl(wasmModuleFilename, prefixOverride));
+     return [needPreload ? url : undefined, await dynamicImportDefault<EmscriptenModuleFactory<OrtWasmModule>>(url)];

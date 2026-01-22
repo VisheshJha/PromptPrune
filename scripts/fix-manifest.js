@@ -17,6 +17,44 @@ if (!fs.existsSync(manifestPath)) {
   process.exit(1)
 }
 
+// Ensure transformers assets are copied to build directory
+const assetsSource = path.join(__dirname, '..', 'assets', 'transformers')
+const assetsDest = path.join(buildDir, 'assets', 'transformers')
+
+if (fs.existsSync(assetsSource)) {
+  try {
+    if (!fs.existsSync(assetsDest)) {
+      fs.mkdirSync(assetsDest, { recursive: true })
+    }
+    
+    // Copy all WASM and MJS files
+    const files = fs.readdirSync(assetsSource)
+    let copiedCount = 0
+    files.forEach(file => {
+      if (file.endsWith('.wasm') || file.endsWith('.mjs') || file.endsWith('.js')) {
+        const srcPath = path.join(assetsSource, file)
+        const destPath = path.join(assetsDest, file)
+        fs.copyFileSync(srcPath, destPath)
+        copiedCount++
+      }
+    })
+    
+    if (copiedCount > 0) {
+      console.log(`✅ Copied ${copiedCount} transformers asset file(s) to build directory`)
+    }
+  } catch (error) {
+    console.warn('⚠️  Could not copy transformers assets:', error.message)
+  }
+} else {
+  console.warn('⚠️  Transformers assets directory not found.')
+  console.warn('   Run: npm run setup:assets')
+  console.warn('   Or: node scripts/setup-transformers-assets.js')
+  console.warn('   Note: Assets should be committed to git for sharing.')
+}
+
+// Note: ML Engine Worker is automatically bundled by Plasmo/Vite
+// No manual file copying needed for workers
+
 // Find content script file
 let contentScriptFile = null
 try {
@@ -72,8 +110,11 @@ const backgroundFile = path.join(buildDir, 'static', 'background', 'index.js')
 if (fs.existsSync(backgroundFile)) {
   if (!manifest.background) {
     manifest.background = {
-      service_worker: 'static/background/index.js'
+      service_worker: 'static/background/index.js',
+      type: 'module'
     }
+  } else if (manifest.background && !manifest.background.type) {
+    manifest.background.type = 'module'
   }
 } else {
   // Remove background if file doesn't exist
@@ -188,8 +229,6 @@ const allMatches = [
   // AI Platforms & APIs
   "https://character.ai/*",
   "https://www.character.ai/*",
-  "https://huggingface.co/*",
-  "https://*.huggingface.co/*",
   "https://replicate.com/*",
   "https://www.replicate.com/*",
   "https://platform.openai.com/*",
@@ -274,12 +313,43 @@ if (!manifest.content_scripts || manifest.content_scripts.length === 0) {
 // Always ensure permissions and background are set
 let manifestChanged = false
 
-// Add CSP for WASM (Critical for onnxruntime-web)
+// Add CSP for WASM (Critical for ML Engine - runs directly in service worker)
 // Forcefully set it to ensure it's correct
 manifest.content_security_policy = manifest.content_security_policy || {}
+// MV3: wasm-unsafe-eval for WASM. 'unsafe-eval' is not allowed in extension_pages.
 manifest.content_security_policy.extension_pages = "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
 manifestChanged = true
-console.log('✅ Added CSP for WASM')
+console.log('✅ Added CSP for WASM (wasm-unsafe-eval for MV3) - enables ML Engine in Service Worker')
+
+// Ensure web_accessible_resources includes transformers assets for Local Asset Bridge
+if (!manifest.web_accessible_resources) {
+  manifest.web_accessible_resources = []
+}
+
+// Check if transformers assets are already included
+const hasTransformersAssets = manifest.web_accessible_resources.some((resource) => {
+  if (typeof resource === 'string') {
+    return resource.includes('assets/transformers')
+  }
+  if (resource.resources) {
+    return resource.resources.some((r) => r.includes('assets/transformers'))
+  }
+  return false
+})
+
+if (!hasTransformersAssets) {
+  // Add transformers assets to web_accessible_resources
+  manifest.web_accessible_resources.push({
+    resources: [
+      'assets/transformers/*.wasm',
+      'assets/transformers/*.mjs',
+      'assets/transformers/*.js'
+    ],
+    matches: ['<all_urls>']
+  })
+  manifestChanged = true
+  console.log('✅ Added transformers assets to web_accessible_resources (Local Asset Bridge)')
+}
 
 if (!manifest.permissions) {
   manifest.permissions = []
@@ -309,10 +379,14 @@ if (!manifest.background) {
   const backgroundFile = path.join(buildDir, 'static', 'background', 'index.js')
   if (fs.existsSync(backgroundFile)) {
     manifest.background = {
-      service_worker: 'static/background/index.js'
+      service_worker: 'static/background/index.js',
+      type: 'module'
     }
     manifestChanged = true
   }
+} else if (manifest.background && !manifest.background.type) {
+  manifest.background.type = 'module'
+  manifestChanged = true
 }
 
 // Preserve key field for stable extension ID (always use the one from package.json)

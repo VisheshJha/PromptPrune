@@ -1,105 +1,86 @@
 /**
- * Transformers.js Configuration
- * Based on HuggingFace's browser_inference_example.js
- * MUST be imported before any other file that imports @xenova/transformers
- * This ensures the URL template is set before transformers.js initializes
- * 
- * Reference: https://github.com/xenova/transformers.js/blob/main/examples/browser/browser_inference_example.js
+ * Transformers.js config for browser/extension. Import before @xenova/transformers.
+ * Backend-Proxied Hybrid: all model requests go through Groot hf-proxy; remoteHost
+ * and remotePathTemplate are overridden in the Service Worker from GROOT_API_URL.
+ *
+ * @see https://github.com/xenova/transformers.js#documentation
  */
 
-// Service worker compatibility: Ensure URL.createObjectURL is available BEFORE importing transformers
-// This must run before @xenova/transformers is imported
-// Transformers.js uses URL.createObjectURL internally for blob handling
+// 1) User-Agent for fetch (Groot proxy adds its own; this covers any direct fallback)
+; (function () {
+  const g = typeof self !== 'undefined' ? self : (typeof globalThis !== 'undefined' ? globalThis : window);
+  if (typeof (g as any).fetch !== 'function') return;
+  const nat = (g as any).fetch;
+  const ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+  (g as any).fetch = function (input: RequestInfo | URL, init?: RequestInit) {
+    const u = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
+    const isProxyOrHf = typeof u === 'string' && (u.includes('hf-proxy') || u.includes('huggingface.co') || u.includes('hf.co'));
+    if (!isProxyOrHf) return nat.call(g, input, init);
 
-// Check multiple sources for URL.createObjectURL
-let createObjectURLFn: ((blob: Blob) => string) | null = null
+    const h = new Headers(init?.headers);
+    if (!h.has('User-Agent')) h.set('User-Agent', ua);
 
-// 1. Check URL constructor
-if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
-  createObjectURLFn = URL.createObjectURL.bind(URL)
-  console.log('[TransformersConfig] ✅ URL.createObjectURL found on URL constructor')
+    // Preserve all original init options, including Range headers from Transformers.js
+    return nat.call(g, input, {
+      ...init,
+      headers: h,
+      // Transformers.js needs 'omit' or 'include' depending on the platform, 
+      // but 'omit' is safest for the Groot proxy/CORS.
+      credentials: init?.credentials || 'omit'
+    });
+  };
+})();
+
+// 2) URL.createObjectURL: use self.URL in SW if main URL lacks it
+if (typeof URL !== 'undefined' && typeof URL.createObjectURL !== 'function' && (self as any).URL?.createObjectURL) {
+  (URL as any).createObjectURL = (self as any).URL.createObjectURL.bind((self as any).URL);
 }
 
-// 2. Check self.URL (service worker global)
-if (!createObjectURLFn && typeof self !== 'undefined') {
-  const SelfURL = (self as any).URL
-  if (SelfURL && typeof SelfURL.createObjectURL === 'function') {
-    createObjectURLFn = SelfURL.createObjectURL.bind(SelfURL)
-    // Also add to URL constructor if missing
-    if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'undefined') {
-      URL.createObjectURL = createObjectURLFn
-    }
-    console.log('[TransformersConfig] ✅ URL.createObjectURL found on self.URL')
+import { env } from '@xenova/transformers';
+import { indexedDBModelCache } from './indexeddb-model-cache';
+import * as ort from 'onnxruntime-web';
+
+// Configure ONNX Runtime environment for extension compatibility
+// (SharedArrayBuffer/threading restriction in extensions)
+if ((ort as any).env?.wasm) {
+  (ort as any).env.wasm.numThreads = 1;
+  (ort as any).env.wasm.simd = true; // 1.17.3 has single-threaded SIMD
+  (ort as any).env.wasm.proxy = false;
+}
+if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+  (ort as any).env.wasm.wasmPaths = chrome.runtime.getURL('assets/transformers/');
+}
+
+const e = env as any;
+
+// Force proxy path: no local models. remoteHost is set in the Service Worker (background/index.ts)
+// to Groot /api/v1/hf-proxy. Do NOT set remoteHost here—it would overwrite that when ml-engine
+// imports this file after the background has set it.
+e.allowLocalModels = false;
+e.cacheDir = 'transformers-cache';
+e.quantized = true;
+e.remotePathTemplate = '{model}/resolve/{revision}/';
+
+// Persistent caching: IndexedDB so models pulled via Groot are 100% offline-ready after first load
+if (typeof indexedDB !== 'undefined') {
+  e.useCustomCache = true;
+  e.customCache = indexedDBModelCache;
+  e.useBrowserCache = false;
+} else {
+  e.useBrowserCache = true;
+}
+
+// WASM Local Bundle: ort-wasm-simd.wasm, ort-wasm.wasm etc. in /assets/transformers/ via chrome.runtime.getURL
+if (e.backends?.onnx?.wasm) {
+  // Extensions lack SharedArrayBuffer support in most contexts; force single-thread.
+  e.backends.onnx.wasm.numThreads = 1;
+  e.backends.onnx.wasm.simd = true;
+  e.backends.onnx.wasm.proxy = false;
+
+  if (typeof chrome !== 'undefined' && chrome.runtime?.getURL) {
+    // Ensuring assets/transformers/ path is correctly set
+    e.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('assets/transformers/');
   }
 }
 
-// 3. Check globalThis
-if (!createObjectURLFn && typeof globalThis !== 'undefined') {
-  const GlobalURL = (globalThis as any).URL
-  if (GlobalURL && typeof GlobalURL.createObjectURL === 'function') {
-    createObjectURLFn = GlobalURL.createObjectURL.bind(GlobalURL)
-    // Also add to URL constructor if missing
-    if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'undefined') {
-      URL.createObjectURL = createObjectURLFn
-    }
-    console.log('[TransformersConfig] ✅ URL.createObjectURL found on globalThis.URL')
-  }
-}
-
-// Final check - if still not available, create a minimal polyfill
-if (!createObjectURLFn) {
-  console.warn('[TransformersConfig] ⚠️ URL.createObjectURL not found, creating minimal polyfill')
-  // Create a minimal polyfill that returns a data URL
-  // This is a fallback - Chrome extension service workers should have URL.createObjectURL
-  createObjectURLFn = function(blob: Blob): string {
-    // Try to use the native implementation if available
-    if (typeof URL !== 'undefined' && typeof (URL as any).createObjectURL === 'function') {
-      return (URL as any).createObjectURL(blob)
-    }
-    // Fallback: return a chrome-extension:// URL (service workers can use this)
-    // This is a workaround - transformers.js might not work perfectly but won't crash
-    const blobUrl = `chrome-extension://${chrome.runtime.id}/blob-${Date.now()}-${Math.random()}`
-    console.warn('[TransformersConfig] Using fallback blob URL:', blobUrl)
-    return blobUrl
-  }
-}
-
-// Ensure it's available on all possible locations
-if (createObjectURLFn) {
-  if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'undefined') {
-    URL.createObjectURL = createObjectURLFn
-    console.log('[TransformersConfig] ✅ URL.createObjectURL assigned to URL constructor')
-  }
-  if (typeof self !== 'undefined') {
-    if (typeof (self as any).URL === 'undefined') {
-      (self as any).URL = { createObjectURL: createObjectURLFn }
-    } else if (typeof (self as any).URL.createObjectURL === 'undefined') {
-      (self as any).URL.createObjectURL = createObjectURLFn
-    }
-    console.log('[TransformersConfig] ✅ URL.createObjectURL available on self.URL')
-  }
-}
-
-import { env } from '@xenova/transformers'
-
-// Configure transformers.js to use resolve/main URLs (not blob/main)
-// This is the key fix from HuggingFace's browser example
-// blob/main returns HTML pages, resolve/main returns raw files
-env.allowLocalModels = false
-env.useBrowserCache = true
-env.remoteURLTemplate = 'https://huggingface.co/{model}/resolve/main/{path}'
-env.remotePath = 'resolve/main'
-
-// Additional browser-specific optimizations
-// These settings ensure proper behavior in Chrome extensions
-if (typeof window !== 'undefined') {
-  // Disable local model loading in browser context
-  env.allowLocalModels = false
-}
-
-// Verify the configuration is correct
-if (env.remoteURLTemplate && !env.remoteURLTemplate.includes('resolve/main')) {
-  console.error('[TransformersConfig] ❌ WARNING: remoteURLTemplate does not use resolve/main!')
-  console.error('[TransformersConfig] Current template:', env.remoteURLTemplate)
-  console.error('[TransformersConfig] This will cause HTML responses instead of raw files!')
-}
+e.allowWorker = typeof window !== 'undefined';

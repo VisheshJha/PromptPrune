@@ -13,6 +13,8 @@ export class CapsuleUI {
   private sensitiveCount: number = 0
   private tokenCount: number = 0
   private currentTarget: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | null = null
+  private downloadProgress: number = 0
+  private isDownloading: boolean = false
 
   /**
    * Set the target textarea for this capsule
@@ -153,6 +155,15 @@ export class CapsuleUI {
   on(event: 'optimize' | 'grammar' | 'frameworks' | 'expand' | 'mask' | 'clear', callback: Function) {
     if (!this.listeners[event]) this.listeners[event] = []
     this.listeners[event].push(callback)
+  }
+
+  /**
+   * Set download progress
+   */
+  setDownloadProgress(progress: number) {
+    this.downloadProgress = progress
+    this.isDownloading = progress > 0 && progress < 100
+    this.renderContent()
   }
 
   private emit(event: string, data?: any) {
@@ -378,7 +389,7 @@ export class CapsuleUI {
         <div class="actions">
           <button class="btn btn-danger" id="mask-btn">Mask</button>
           <button class="btn btn-danger visible" id="clear-btn" title="Clear text" style="display: block;">Clear</button>
-          <button class="btn btn-primary" id="optimize-btn" disabled style="opacity: 0.7; cursor: not-allowed;">Optimize (Soon)</button>
+          <button class="btn btn-primary" id="optimize-btn" title="Optimize prompt using AI">Optimize</button>
           <button class="btn" id="framework-btn" title="Frameworks">⌘</button>
         </div>
       </div>
@@ -395,10 +406,8 @@ export class CapsuleUI {
 
     optimizeBtn?.addEventListener('click', (e) => {
       e.stopPropagation()
-      // Disabled temporarily
-      return
-      // if (this.isLocked) return
-      // this.emit('optimize')
+      if (this.isLocked) return
+      this.emit('optimize')
     })
 
     frameworkBtn?.addEventListener('click', (e) => {
@@ -444,14 +453,32 @@ export class CapsuleUI {
       if (this.isLocked) {
         capsule.classList.add('locked')
         capsule.classList.remove('alert')
+      } else if (this.isDownloading) {
+        const optimizeBtn = this.shadowRoot.getElementById('optimize-btn')
+        if (optimizeBtn) {
+          optimizeBtn.textContent = `⬇️ ${Math.round(this.downloadProgress)}%`
+          optimizeBtn.setAttribute('disabled', 'true')
+        }
       } else if (this.state === 'alert') {
         capsule.classList.add('alert')
         capsule.classList.remove('locked')
         maskBtn?.classList.add('visible')
+        // Restore optimize button text if it was showing progress
+        const optimizeBtn = this.shadowRoot.getElementById('optimize-btn')
+        if (optimizeBtn && optimizeBtn.textContent?.includes('%')) {
+          optimizeBtn.textContent = 'Optimize'
+          optimizeBtn.removeAttribute('disabled')
+        }
       } else {
         capsule.classList.remove('alert')
         capsule.classList.remove('locked')
         maskBtn?.classList.remove('visible')
+        // Restore optimize button text
+        const optimizeBtn = this.shadowRoot.getElementById('optimize-btn')
+        if (optimizeBtn && optimizeBtn.textContent?.includes('%')) {
+          optimizeBtn.textContent = 'Optimize'
+          optimizeBtn.removeAttribute('disabled')
+        }
       }
     }
   }

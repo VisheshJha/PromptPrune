@@ -7,9 +7,6 @@ import type { PlasmoCSConfig } from "plasmo"
 import { compressPrompt } from "~/lib/prompt-compressor"
 import { applyFramework, rankFrameworks, FRAMEWORKS, type FrameworkType } from "~/lib/prompt-frameworks"
 import { getAllTokenCounts } from "~/lib/tokenizers"
-import { isFollowUpMessage } from "~/lib/prompt-guide"
-import { generateFirstPromptTemplate, generateFollowUpTemplate, shouldPreFillTemplate } from "~/lib/prompt-template"
-import { testComplexPrompt, quickTestShorten, quickTestFrameworkSwitching } from "~/lib/prompt-test-runner"
 
 declare global {
   interface Window {
@@ -17,18 +14,20 @@ declare global {
   }
 }
 
-import { testSmartOptimizer } from "~/lib/test-smart-optimizer"
-import { runAllTests, quickTest, PROMPT_TEST_CASES } from "~/lib/prompt-type-tester"
-import { optimizePromptSmartly } from "~/lib/smart-prompt-optimizer"
-import { getUnifiedModelManager } from "~/lib/unified-model-manager"
-import { showDownloadProgress } from "~/content/model-download-ui"
 import { getCapsuleUI } from "~/content/capsule-ui"
 
 import { detectSensitiveContent, type SensitiveContentResult } from "~/lib/sensitive-content-detector"
 
 import { RealTimeAssistant } from "~/components/realtime"
 import { getPreviewModal } from "~/content/preview-modal"
+import { authService, type AuditLogData } from "~/lib/auth-service"
 
+// "Extension context invalidated" is thrown when the extension is reloaded (e.g. HMR) while the
+// content script is still running. Chrome APIs (runtime, storage) throw; we catch and degrade.
+const EXT_CTX_INVALID = 'Extension context invalidated.'
+function isExtCtxInvalid(e: unknown): boolean {
+  return (e instanceof Error && e.message === EXT_CTX_INVALID) || String(e) === EXT_CTX_INVALID
+}
 
 export const config: PlasmoCSConfig = {
   matches: [
@@ -223,17 +222,10 @@ const getBypassFlagForTextarea = (textArea: HTMLTextAreaElement | HTMLDivElement
   return flag
 }
 
-  // Helper to update field buttons visibility
-  // Field buttons removed - only smart mode now
-
   // Only smart mode now - basic mode removed
   ; (window as any).__promptprune_analysis_mode = 'smart'
 const textAreaFieldButtons = new WeakMap<HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | HTMLInputElement, HTMLElement>()
 let frameworkUI: HTMLElement | null = null
-
-import { authService, type AuditLogData } from "~/lib/auth-service"
-
-// ... imports
 
 // Function to update capsule auth state (can be called from multiple places)
 let lastAuthState: boolean | null = null
@@ -485,6 +477,46 @@ function findTextAreas(): Array<HTMLTextAreaElement | HTMLDivElement | HTMLInput
   }
 
   return textAreas
+}
+
+/**
+ * Call ML engine for hybrid PII detection (regex + GLiNER)
+ * Falls back to regex-only if ML engine is unavailable
+ */
+async function detectPIIWithML(text: string): Promise<SensitiveContentResult> {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({
+        type: 'DETECT_PII_ML',
+        text: text
+      }, (response) => {
+        if (chrome.runtime.lastError) {
+          // ML engine unavailable, fallback to regex
+          console.warn('[PromptPrune] ML engine unavailable, using regex-only:', chrome.runtime.lastError.message);
+          resolve(detectSensitiveContent(text));
+          return;
+        }
+        
+        if (response && response.success && response.result) {
+          // ML engine returns hybrid result (regex + GLiNER merged)
+          resolve({
+            hasSensitiveContent: response.result.hasSensitiveContent || false,
+            detectedItems: response.result.detectedItems || [],
+            riskScore: response.result.riskScore || 0,
+            shouldBlock: response.result.hasSensitiveContent || false,
+            verifiedByML: response.result.verifiedByML || false
+          });
+        } else {
+          // Fallback to regex if ML fails
+          resolve(detectSensitiveContent(text));
+        }
+      });
+    } catch (error) {
+      // Fallback to regex on error
+      console.warn('[PromptPrune] ML detection error, using regex-only:', error);
+      resolve(detectSensitiveContent(text));
+    }
+  });
 }
 
 function getText(element: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement | HTMLInputElement): string {
@@ -788,54 +820,39 @@ async function analyzeWithSmartOptimizer(textArea: HTMLTextAreaElement | HTMLDiv
   // Use stored original if current is framework output, otherwise use current (complete) text
   const originalPrompt = isFrameworkOutput ? (originalPrompts.get(textArea) || currentText) : currentText
 
-  // Check if shared models are ready (stored in background service worker)
-  // Models are downloaded once and shared across all platforms
-  const unifiedModel = getUnifiedModelManager()
-  let modelReady = unifiedModel.isReady()
-
-  if (!modelReady) {
-    // Try to initialize (will check shared models in background service worker)
-    try {
-      await unifiedModel.initialize()
-      modelReady = unifiedModel.isReady()
-    } catch (error) {
-      console.warn("[PromptPrune] Shared models not ready, using fallback:", error)
-    }
-  }
-
-  // If models still not ready, use fallback methods
-  if (!modelReady) {
-    analyzeWithBestFramework(textArea, text)
-    return
-  }
-
-  showNotification("Analyzing with AI...", "info")
-
   try {
-    // Use smart optimizer
-    const result = await optimizePromptSmartly(originalPrompt)
+    showNotification("Initializing AI analysis...", "info")
 
-    // Show warnings if any
-    if (result.warnings.length > 0) {
-      const warningText = result.warnings.slice(0, 3).join(", ")
-      showNotification(`⚠️ ${warningText}`, "warning")
-    }
-
-    // Apply the improved prompt
-
-    const previewModal = getPreviewModal()
-    previewModal.show(originalPrompt, result.improvedPrompt, (newText) => {
-      setText(textArea, newText)
-      showNotification(
-        `✅ Applied ${result.template?.name || 'Smart template'} (${Math.round(result.confidence * 100)}% confidence)`,
-        "success"
-      )
+    // Dispatch to background ML engine
+    const response = await chrome.runtime.sendMessage({
+      type: "OPTIMIZE_PROMPT",
+      payload: {
+        text: originalPrompt,
+        mode: "OPTIMIZE"
+      }
     })
-  } catch (error) {
-    console.error("[PromptPrune] Smart analysis failed:", error)
-    // Fallback to framework-based analysis
-    showNotification("Smart analysis failed, using framework analysis", "warning")
-    analyzeWithBestFramework(textArea, text)
+
+    if (response && response.optimized) {
+      console.log("[PromptPrune] Received optimized prompt from background:", response)
+      setText(textArea, response.optimized)
+      showNotification("Prompt optimized successfully", "success")
+    } else {
+      throw new Error("Invalid response from background")
+    }
+  } catch (err) {
+    console.error("Analysis error:", err)
+    showNotification("AI analysis failed - using fallback", "warning")
+
+    // Fallback: use simple framework ranking (local)
+    const rankings = await rankFrameworks(originalPrompt)
+    if (rankings.length > 0) {
+      const best = rankings[0]
+      const frameworkOutput = await applyFramework(originalPrompt, best.framework)
+      if (frameworkOutput && frameworkOutput.optimized) {
+        setText(textArea, frameworkOutput.optimized)
+        showNotification(`Optimized using ${FRAMEWORKS[best.framework].name} (fallback)`, "success")
+      }
+    }
   }
 }
 
@@ -1180,11 +1197,15 @@ async function shortenPrompt(textArea: HTMLTextAreaElement | HTMLDivElement | HT
       const allOriginal: number[] = []
       const allCompressed: number[] = []
 
-      Object.values(originalCounts).forEach(providerCounts => {
-        providerCounts.forEach((count: { count: number }) => allOriginal.push(count.count))
+      Object.values(originalCounts).forEach((providerCounts: any) => {
+        if (Array.isArray(providerCounts)) {
+          providerCounts.forEach((count: { count: number }) => allOriginal.push(count.count))
+        }
       })
-      Object.values(compressedCounts).forEach(providerCounts => {
-        providerCounts.forEach((count: { count: number }) => allCompressed.push(count.count))
+      Object.values(compressedCounts).forEach((providerCounts: any) => {
+        if (Array.isArray(providerCounts)) {
+          providerCounts.forEach((count: { count: number }) => allCompressed.push(count.count))
+        }
       })
 
       originalTokens = allOriginal.length > 0
@@ -1741,6 +1762,9 @@ function showSensitiveContentWarning(
 
   // Create modal content - simplified, modern design
   const modal = document.createElement("div")
+  modal.setAttribute("role", "alertdialog")
+  modal.setAttribute("aria-labelledby", "warning-title")
+  modal.setAttribute("aria-modal", "true")
   modal.style.cssText = `
     background: linear-gradient(135deg, #ffffff 0%, #f9fafb 100%);
     border-radius: 16px;
@@ -1771,6 +1795,7 @@ function showSensitiveContentWarning(
   `
 
   const title = document.createElement("h2")
+  title.id = "warning-title"
   title.textContent = "Sensitive Information Detected"
   title.style.cssText = `
     margin: 0 0 8px 0;
@@ -1876,15 +1901,15 @@ function showSensitiveContentWarning(
     sensitiveCheck.detectedItems.slice(0, 5).forEach((item: any) => {
       const itemDiv = document.createElement("div")
       itemDiv.style.cssText = `
-
-        padding: 12px;
-        margin-bottom: 8px;
+        padding: 14px;
+        margin-bottom: 10px;
         background: #f9fafb;
         border-radius: 8px;
         font-size: 13px;
-        border: 1px solid ${item.severity === 'high' ? '#fee2e2' : item.severity === 'medium' ? '#fef3c7' : '#dbeafe'};
+        border-left: 4px solid ${item.severity === 'high' ? '#dc2626' : item.severity === 'medium' ? '#f59e0b' : '#3b82f6'};
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
       `
-      // Clean up type name for display - remove "Standalone" suffix and format nicely
+      // Clean up type name for display
       let typeName = item.type.replace(/_/g, ' ').replace(/\b\w/g, (char: string) => char.toUpperCase())
       typeName = typeName.replace(/Standalone/gi, '').trim()
 
@@ -1898,14 +1923,31 @@ function showSensitiveContentWarning(
       if (typeName.toLowerCase().includes('driver license')) typeName = 'Driver License'
       if (typeName.toLowerCase().includes('credit card')) typeName = 'Credit Card'
       if (typeName.toLowerCase().includes('bank account')) typeName = 'Bank Account'
-      if (typeName.toLowerCase().includes('api key')) typeName = 'API Key'
+      if (typeName.toLowerCase().includes('api key')) typeName = 'API Key/Token'
       if (typeName.toLowerCase().includes('phone')) typeName = 'Phone Number'
+      if (typeName.toLowerCase().includes('email')) typeName = 'Email Address'
+      if (typeName.toLowerCase().includes('indian state')) typeName = 'Indian State'
+      if (typeName.toLowerCase().includes('indian city')) typeName = 'Indian City/District'
+      if (typeName.toLowerCase().includes('indian address')) typeName = 'Indian Address'
+
+      // Show the actual flagged value (masked)
+      const flaggedValue = item.value || item.originalValue?.replace(/./g, '*') || '[REDACTED]'
+
       itemDiv.innerHTML = `
-        <div style="font-weight: 600; color: #111827; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
-          <span style="width: 8px; height: 8px; border-radius: 50%; background: ${item.severity === 'high' ? '#dc2626' : item.severity === 'medium' ? '#f59e0b' : '#3b82f6'};"></span>
-          ${typeName}
+        <div style="display: flex; align-items: start; gap: 10px; margin-bottom: 8px;">
+          <span style="width: 10px; height: 10px; border-radius: 50%; background: ${item.severity === 'high' ? '#dc2626' : item.severity === 'medium' ? '#f59e0b' : '#3b82f6'}; margin-top: 4px; flex-shrink: 0;"></span>
+          <div style="flex: 1;">
+            <div style="font-weight: 700; color: #111827; margin-bottom: 6px; font-size: 14px;">
+              ${typeName}
+            </div>
+            <div style="background: #ffffff; border: 1px solid #e5e7eb; padding: 8px 10px; border-radius: 6px; font-family: 'Courier New', monospace; font-size: 13px; color: #dc2626; font-weight: 600; margin-bottom: 6px; word-break: break-all;">
+              "${flaggedValue}"
+            </div>
+            <div style="color: #6b7280; font-size: 12px; line-height: 1.5;">
+              ${item.suggestion.replace(/🚨|⚠️/g, '').trim()}
+            </div>
+          </div>
         </div>
-        <div style="color: #6b7280; font-size: 12px; line-height: 1.4;">${item.suggestion.replace(/🚨|⚠️/g, '').trim()}</div>
       `
       detectedList.appendChild(itemDiv)
     })
@@ -1916,10 +1958,13 @@ function showSensitiveContentWarning(
         text-align: center;
         color: #6b7280;
         font-size: 12px;
-        padding-top: 8px;
-        font-weight: 500;
+        padding: 12px;
+        font-weight: 600;
+        background: #f3f4f6;
+        border-radius: 6px;
+        margin-top: 4px;
       `
-      moreDiv.textContent = `+${sensitiveCheck.detectedItems.length - 5} more sensitive items found`
+      moreDiv.textContent = `+${sensitiveCheck.detectedItems.length - 5} more sensitive items detected`
       detectedList.appendChild(moreDiv)
     }
 
@@ -2235,7 +2280,7 @@ function showSensitiveContentWarning(
 }
 
 // Show notification
-function showNotification(message: string, type: "success" | "error" | "warning" | "info") {
+function showNotification(message: string, type: "success" | "error" | "warning" | "info", duration: number = 3000) {
   // Remove existing notification
   const existing = document.getElementById("promptprune-notification")
   if (existing) {
@@ -2288,10 +2333,202 @@ function showNotification(message: string, type: "success" | "error" | "warning"
   notification.textContent = message
   document.body.appendChild(notification)
 
-  setTimeout(() => {
-    notification.style.animation = "slideIn 0.3s ease-out reverse"
-    setTimeout(() => notification.remove(), 300)
-  }, 3000)
+  // Auto-remove after duration (0 = never auto-remove, for loading states)
+  if (duration > 0) {
+    setTimeout(() => {
+      notification.style.animation = "slideIn 0.3s ease-out reverse"
+      setTimeout(() => notification.remove(), 300)
+    }, duration)
+  }
+  // Return notification element so caller can manually remove it if needed
+  return notification
+}
+
+// --- One-time model download overlay (blocking "please wait" screen) ---
+const MODEL_DOWNLOAD_OVERLAY_ID = 'promptprune-model-download-overlay'
+let _downloadOverlayRef: { progFill: HTMLDivElement; pctText: HTMLSpanElement } | null = null
+
+function createModelDownloadOverlay(): void {
+  if (document.getElementById(MODEL_DOWNLOAD_OVERLAY_ID)) return
+  const wrap = document.createElement('div')
+  wrap.id = MODEL_DOWNLOAD_OVERLAY_ID
+  wrap.style.cssText = `
+    position: fixed; inset: 0; z-index: 10000001;
+    background: rgba(0,0,0,0.78); backdrop-filter: blur(6px);
+    display: flex; align-items: center; justify-content: center;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    animation: ppFadeIn 0.25s ease-out;
+    pointer-events: auto;
+  `
+  const card = document.createElement('div')
+  card.style.cssText = `
+    background: linear-gradient(135deg, #ffffff 0%, #f9fafb 100%);
+    border-radius: 16px; padding: 32px; max-width: 400px; width: 90%;
+    box-shadow: 0 25px 50px -12px rgba(0,0,0,0.3);
+    border: 1px solid rgba(0,0,0,0.06);
+    text-align: center;
+  `
+  const icon = document.createElement('div')
+  icon.textContent = '📥'
+  icon.style.cssText = 'font-size: 48px; margin-bottom: 12px;'
+  const title = document.createElement('h2')
+  title.textContent = 'Downloading AI models (one-time)'
+  title.style.cssText = 'margin: 0 0 8px 0; font-size: 20px; font-weight: 700; color: #111827;'
+  const sub = document.createElement('p')
+  sub.textContent = 'Downloading in background • You can continue using the extension'
+  sub.style.cssText = 'margin: 0 0 20px 0; color: #6b7280; font-size: 14px;'
+  const progWrap = document.createElement('div')
+  progWrap.style.cssText = 'height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden; margin-bottom: 8px;'
+  const progFill = document.createElement('div')
+  progFill.style.cssText = 'height: 100%; background: #10b981; width: 0%; transition: width 0.3s ease;'
+  progWrap.appendChild(progFill)
+  const pctText = document.createElement('span')
+  pctText.textContent = '0%'
+  pctText.style.cssText = 'font-size: 13px; font-weight: 600; color: #374151;'
+  const hint = document.createElement('div')
+  hint.id = 'promptprune-download-hint'
+  hint.style.cssText = 'margin-top: 12px; font-size: 12px; color: #9ca3af; display: none; line-height: 1.4;'
+  
+  // Add close button
+  const closeBtn = document.createElement('button')
+  closeBtn.textContent = '✕'
+  closeBtn.setAttribute('aria-label', 'Close')
+  closeBtn.style.cssText = `
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: rgba(0,0,0,0.05);
+    border: none;
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    cursor: pointer;
+    font-size: 18px;
+    color: #6b7280;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    z-index: 1000;
+    pointer-events: auto;
+    user-select: none;
+    -webkit-user-select: none;
+  `
+  closeBtn.addEventListener('mouseenter', () => {
+    closeBtn.style.background = 'rgba(0,0,0,0.1)'
+    closeBtn.style.color = '#111827'
+  })
+  closeBtn.addEventListener('mouseleave', () => {
+    closeBtn.style.background = 'rgba(0,0,0,0.05)'
+    closeBtn.style.color = '#6b7280'
+  })
+  const handleClose = (e?: Event) => {
+    if (e) {
+      e.preventDefault()
+      e.stopPropagation()
+      e.stopImmediatePropagation()
+    }
+    console.log('[PromptPrune] User closed download overlay - continuing in background')
+    
+    // Hide overlay immediately
+    const overlay = document.getElementById(MODEL_DOWNLOAD_OVERLAY_ID)
+    if (overlay) {
+      overlay.style.opacity = '0'
+      overlay.style.pointerEvents = 'none'
+      setTimeout(() => {
+        if (overlay.parentNode) {
+          overlay.parentNode.removeChild(overlay)
+        }
+        _downloadOverlayRef = null
+      }, 200)
+    }
+    
+    // Set status to allow background download
+    if (typeof chrome !== 'undefined' && chrome.storage?.local?.set) {
+      chrome.storage.local.set({ 
+        'promptprune-model-download-status': 'downloading-background',
+        'promptprune-models-ready': false
+      }, () => {
+        console.log('[PromptPrune] ✅ Download status set to background mode - models will continue downloading')
+      })
+    }
+    showNotification('Download will continue in background. You can continue using the extension.', 'info', 4000)
+  }
+  
+  // Multiple event handlers to ensure it works
+  const closeHandler = (e: Event) => {
+    console.log('[PromptPrune] Close button clicked!', e.type);
+    handleClose(e);
+  };
+  
+  closeBtn.addEventListener('click', closeHandler, { capture: true });
+  closeBtn.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Also trigger close on mousedown for better responsiveness
+    setTimeout(() => handleClose(e), 0);
+  }, { capture: true });
+  
+  // Also add pointer events for better compatibility
+  closeBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    handleClose(e);
+  }, { capture: true });
+  
+  // Ensure button is visible and clickable
+  closeBtn.style.pointerEvents = 'auto';
+  closeBtn.style.cursor = 'pointer';
+  closeBtn.setAttribute('tabindex', '0'); // Make it focusable
+  
+  const style = document.createElement('style')
+  style.textContent = `@keyframes ppFadeIn { from { opacity: 0; } to { opacity: 1; } }`
+  if (!document.head.querySelector('#promptprune-download-overlay-style')) {
+    style.id = 'promptprune-download-overlay-style'
+    document.head.appendChild(style)
+  }
+  
+  // Make card position relative for close button
+  card.style.position = 'relative'
+  card.append(icon, title, sub, progWrap, pctText, hint, closeBtn)
+  wrap.appendChild(card)
+  document.body.appendChild(wrap)
+  _downloadOverlayRef = { progFill, pctText }
+  
+  // Store handleClose reference for debugging
+  (wrap as any).__handleClose = handleClose;
+  (closeBtn as any).__handleClose = handleClose;
+  
+  // Also allow clicking outside to close (optional - user can still use close button)
+  wrap.addEventListener('click', (e) => {
+    // Only close if clicking on the overlay background, not on the card
+    if (e.target === wrap) {
+      console.log('[PromptPrune] Overlay background clicked, closing...');
+      handleClose(e)
+    }
+  }, true)
+  
+  // Prevent card clicks from closing
+  card.addEventListener('click', (e) => {
+    e.stopPropagation()
+  }, true)
+  
+  // Debug: Log when button is created
+  console.log('[PromptPrune] Close button created and attached to overlay');
+}
+
+function updateModelDownloadOverlay(pct: number): void {
+  const p = Math.min(100, Math.max(0, Math.round(pct)))
+  if (_downloadOverlayRef) {
+    _downloadOverlayRef.progFill.style.width = `${p}%`
+    _downloadOverlayRef.pctText.textContent = `${p}%`
+  }
+}
+
+function hideModelDownloadOverlay(): void {
+  const el = document.getElementById(MODEL_DOWNLOAD_OVERLAY_ID)
+  if (el) el.remove()
+  _downloadOverlayRef = null
 }
 
 async function maskSensitiveData(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement) {
@@ -2367,14 +2604,199 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
   // Initialize Capsule UI (Singleton)
   capsule.mount()
 
+  // Detect if this is a follow-up message (second prompt in chat)
+  function isFollowUpMessage(textArea: HTMLTextAreaElement | HTMLDivElement | HTMLInputElement): boolean {
+    // Look for already-sent user messages in the conversation
+    // We want to detect if there are previous user messages that have been sent
+    
+    // ChatGPT-specific: Look for user messages with data-message-author-role="user"
+    const chatGPTUserMessages = document.querySelectorAll('[data-message-author-role="user"]')
+    if (chatGPTUserMessages.length > 0) {
+      console.log('[PromptPrune] Follow-up detected: ChatGPT user messages found:', chatGPTUserMessages.length)
+      return true
+    }
+    
+    // ChatGPT: Also check for message containers that are not the current textarea
+    const chatGPTMessages = document.querySelectorAll('[data-testid*="message"]')
+    if (chatGPTMessages.length > 1) { // More than 1 means there's at least one sent message
+      console.log('[PromptPrune] Follow-up detected: ChatGPT messages found:', chatGPTMessages.length)
+      return true
+    }
+    
+    // Claude: Look for conversation turns
+    const claudeTurns = document.querySelectorAll('.conversation-turn')
+    if (claudeTurns.length > 0) {
+      console.log('[PromptPrune] Follow-up detected: Claude conversation turns found:', claudeTurns.length)
+      return true
+    }
+    
+    // Generic: Look for user message indicators
+    const userMessageSelectors = [
+      '[data-author="user"]',
+      '[data-role="user"]',
+      '.user-message',
+      '.message.user',
+      '[class*="user"][class*="message"]',
+    ]
+    
+    for (const selector of userMessageSelectors) {
+      try {
+        const messages = document.querySelectorAll(selector)
+        if (messages.length > 0) {
+          console.log('[PromptPrune] Follow-up detected: User messages found with selector:', selector, messages.length)
+          return true
+        }
+      } catch (e) {
+        // Ignore selector errors
+      }
+    }
+    
+    // Check if there are assistant/AI responses (indicates conversation has started)
+    const assistantSelectors = [
+      '[data-message-author-role="assistant"]',
+      '[data-author="assistant"]',
+      '[data-role="assistant"]',
+      '.assistant-message',
+      '.message.assistant',
+      '[class*="assistant"][class*="message"]',
+    ]
+    
+    for (const selector of assistantSelectors) {
+      try {
+        const messages = document.querySelectorAll(selector)
+        if (messages.length > 0) {
+          console.log('[PromptPrune] Follow-up detected: Assistant messages found with selector:', selector, messages.length)
+          return true
+        }
+      } catch (e) {
+        // Ignore selector errors
+      }
+    }
+    
+    // Check if textarea is positioned after other elements (indicating it's not the first)
+    // This is a fallback - if the textarea has siblings before it that look like messages
+    if (textArea.parentElement) {
+      const siblings = Array.from(textArea.parentElement.children)
+      const textAreaIndex = siblings.indexOf(textArea as HTMLElement)
+      
+      // If there are elements before the textarea, check if they look like messages
+      if (textAreaIndex > 0) {
+        const previousElements = siblings.slice(0, textAreaIndex)
+        for (const elem of previousElements) {
+          // Check if element contains text that looks like a message
+          const text = elem.textContent || ''
+          if (text.trim().length > 10) { // Has substantial content
+            // Check if it's not just UI elements
+            const hasMessageIndicators = elem.querySelector('[class*="message"]') ||
+                                       elem.querySelector('[class*="Message"]') ||
+                                       elem.getAttribute('data-message-author-role')
+            if (hasMessageIndicators) {
+              console.log('[PromptPrune] Follow-up detected: Previous sibling element looks like a message')
+              return true
+            }
+          }
+        }
+      }
+    }
+    
+    // Additional check: Look for any visible conversation history in the viewport
+    // Check for common message container patterns that indicate a conversation exists
+    const allMessageContainers = document.querySelectorAll('[class*="message"], [class*="Message"], [data-testid*="message"], [role="article"]')
+    if (allMessageContainers.length > 0) {
+      // Filter to only visible, substantial messages (not empty containers)
+      const visibleMessages = Array.from(allMessageContainers).filter(msg => {
+        const rect = msg.getBoundingClientRect()
+        const isVisible = rect.width > 0 && rect.height > 0
+        const hasContent = (msg.textContent || '').trim().length > 20
+        return isVisible && hasContent
+      })
+      
+      if (visibleMessages.length > 0) {
+        console.log('[PromptPrune] Follow-up detected: Visible message containers found:', visibleMessages.length)
+        return true
+      }
+    }
+    
+    console.log('[PromptPrune] No follow-up detected - treating as first message')
+    return false
+  }
+
+  // Prefill template when textarea is focused and empty
+  function prefillTemplate() {
+    const currentText = getText(textArea).trim()
+    
+    // Only prefill if:
+    // 1. Textarea is empty
+    // 2. User hasn't explicitly cleared it
+    // 3. It's not already a template format
+    if (currentText.length === 0 && 
+        !textArea.hasAttribute("data-cleared-by-user") &&
+        !/^(Role:|Task:|Context:|Format:|Tone:|Summarize)/m.test(currentText)) {
+      
+      // Check if this is a follow-up message
+      const isFollowUp = isFollowUpMessage(textArea)
+      console.log('[PromptPrune] Prefill check:', { isFollowUp, textArea: textArea.tagName })
+      
+      let template: string
+      let cursorPos: number
+      
+      if (isFollowUp) {
+        // For follow-up messages, use "Summarize"
+        console.log('[PromptPrune] Using "Summarize" template for follow-up')
+        template = 'Summarize'
+        cursorPos = template.length
+      } else {
+        // For first message, use full template
+        console.log('[PromptPrune] Using full template for first message')
+        template = `Role: 
+Task: 
+Context: 
+Format: 
+Tone: `
+        cursorPos = template.indexOf("Role: ") + 6
+      }
+      
+      setText(textArea, template)
+      
+      // Focus and place cursor at appropriate position
+      setTimeout(() => {
+        if (textArea instanceof HTMLTextAreaElement || textArea instanceof HTMLInputElement) {
+          textArea.setSelectionRange(cursorPos, cursorPos)
+          textArea.focus()
+        } else if (textArea instanceof HTMLElement && textArea.isContentEditable) {
+          // For content-editable divs (ChatGPT, Claude, etc.)
+          textArea.focus()
+          const range = document.createRange()
+          const selection = window.getSelection()
+          if (selection && textArea.firstChild) {
+            const textNode = textArea.firstChild
+            const textContent = textNode.textContent || ''
+            const index = isFollowUp ? textContent.length : (textContent.indexOf("Role: ") + 6)
+            if (index >= 0) {
+              range.setStart(textNode, Math.min(index, textContent.length))
+              range.setEnd(textNode, Math.min(index, textContent.length))
+              selection.removeAllRanges()
+              selection.addRange(range)
+            }
+          }
+        }
+      }, 10)
+    }
+  }
+
   // Update capsule target when textarea is focused or hovered
   const updateCapsule = () => {
     capsule.setTarget(textArea)
     textAreaCapsules.set(textArea, capsule)
+    // Prefill template on focus if empty
+    prefillTemplate()
   }
 
   textArea.addEventListener('focus', updateCapsule)
-  textArea.addEventListener('mouseenter', updateCapsule)
+  textArea.addEventListener('mouseenter', () => {
+    capsule.setTarget(textArea)
+    textAreaCapsules.set(textArea, capsule)
+  })
 
   // Initial update if this is the active element
   if (document.activeElement === textArea) {
@@ -2393,11 +2815,211 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
           showNotification("Please enter some text first", "warning")
           return
         }
+
+        // Show loading state
         capsule.setLoading(true)
+        let loadingNotification = showNotification("🔄 Optimizing prompt with AI... This may take a moment.", "info", 0) // 0 = no auto-dismiss
+
+        // Track start time for timeout
+        const startTime = Date.now()
+        const maxWaitTime = 60000 // 60 seconds max
+
         try {
-          await analyzeWithSmartOptimizer(target, text)
-        } finally {
+          // Check if models are downloading first
+          const modelStatus = await new Promise<any>((resolve) => {
+            try {
+              chrome.runtime.sendMessage({ type: 'CHECK_MODEL_STATUS' }, (response) => {
+                resolve(response || {})
+              })
+            } catch (e) {
+              if (isExtCtxInvalid(e)) {
+                resolve({ piiReady: false, _ctxInvalid: true })
+                return
+              }
+              throw e
+            }
+          })
+
+          if (modelStatus && modelStatus._ctxInvalid) {
+            if (loadingNotification) loadingNotification.remove()
+            showNotification('Extension was updated. Please refresh the page to continue.', 'warning')
+            capsule.setLoading(false)
+            return
+          }
+
+          // If models are not ready, show download progress (via Capsule)
+          if (modelStatus && !modelStatus.piiReady) {
+            // Request model initialization (only once)
+            chrome.runtime.sendMessage({ type: 'INIT_MODELS' }, () => {
+              // Models will download in background or load from cache
+            })
+
+            // Poll for model readiness with progress updates
+            const checkModelReady = setInterval(async () => {
+              try {
+                const status = await new Promise<any>((resolve) => {
+                  try {
+                    chrome.runtime.sendMessage({ type: 'CHECK_MODEL_STATUS' }, (response) => {
+                      resolve(response || {})
+                    })
+                  } catch (e) {
+                    if (isExtCtxInvalid(e)) {
+                      resolve({ _ctxInvalid: true })
+                      return
+                    }
+                    throw e
+                  }
+                })
+                if (status && status._ctxInvalid) {
+                  clearInterval(checkModelReady)
+                  if (loadingNotification) loadingNotification.remove()
+                  showNotification('Extension was updated. Please refresh the page to continue.', 'warning')
+                  capsule.setLoading(false)
+                  return
+                }
+                try {
+                  chrome.storage.local.get(['pii_model_progress', 'optimizer_model_progress', 'promptprune-models-ready'], (result) => {
+                    const piiProgress = result?.pii_model_progress || 0
+                    const optProgress = result?.optimizer_model_progress || 0
+                    // Weighted average: PII model is ~50MB, Optimizer is ~150MB, so weight optimizer more
+                    // But for UX, show progress based on both models being ready
+                    const totalProgress = Math.round((piiProgress * 0.25 + optProgress * 0.75))
+                    if (totalProgress > 0 && totalProgress < 100) {
+                      capsule.setDownloadProgress(totalProgress)
+                    }
+                    // Check both status and storage flag for models ready (cache loads quickly)
+                    // Note: We proceed when PII is ready (required), optimizer is optional
+                    if (status?.piiReady || result?.['promptprune-models-ready']) {
+                      capsule.setDownloadProgress(100)
+                      clearInterval(checkModelReady)
+                      proceedWithOptimization()
+                    }
+                  })
+                } catch (e) {
+                  if (isExtCtxInvalid(e)) {
+                    clearInterval(checkModelReady)
+                    if (loadingNotification) loadingNotification.remove()
+                    showNotification('Extension was updated. Please refresh the page to continue.', 'warning')
+                    capsule.setLoading(false)
+                  } else {
+                    throw e
+                  }
+                }
+              } catch (e) {
+                if (isExtCtxInvalid(e)) {
+                  clearInterval(checkModelReady)
+                  if (loadingNotification) loadingNotification.remove()
+                  showNotification('Extension was updated. Please refresh the page to continue.', 'warning')
+                  capsule.setLoading(false)
+                }
+              }
+            }, 200) // Faster polling to detect cache usage quickly
+
+            // Timeout after max wait time
+            setTimeout(() => {
+              clearInterval(checkModelReady)
+              if (!modelStatus.piiReady) {
+                showNotification("⏱️ Model download is taking longer than expected. Please try again in a moment.", "warning")
+                capsule.setLoading(false)
+              }
+            }, maxWaitTime)
+
+            return // Exit early, proceedWithOptimization will be called when ready
+          }
+
+          // Models are ready, proceed with optimization
+          proceedWithOptimization()
+
+        } catch (error) {
+          if (loadingNotification) loadingNotification.remove()
+          if (isExtCtxInvalid(error)) {
+            showNotification('Extension was updated. Please refresh the page to continue.', 'warning')
+          } else {
+            console.error('[PromptPrune] Optimization setup error:', error)
+            const errorMsg = error instanceof Error ? error.message : String(error)
+            showNotification(`Setup failed: ${errorMsg}`, "error")
+          }
           capsule.setLoading(false)
+        }
+
+        // Function to proceed with actual optimization
+        async function proceedWithOptimization() {
+          try {
+            // Update notification
+            if (loadingNotification) {
+              loadingNotification.textContent = "🔄 Optimizing prompt..."
+            } else {
+              loadingNotification = showNotification("🔄 Optimizing prompt...", "info", 0)
+            }
+
+            // Send optimization request with timeout
+            const response = await Promise.race([
+              new Promise<any>((resolve) => {
+                chrome.runtime.sendMessage({
+                  type: "OPTIMIZE_PROMPT",
+                  text: text,
+                  mode: "OPTIMIZE"
+                }, (response) => {
+                  resolve(response)
+                })
+              }),
+              new Promise<any>((_, reject) => {
+                setTimeout(() => reject(new Error('Optimization timeout - please try again')), 90000) // Increased to 90s to match ML engine timeout
+              })
+            ])
+
+            if (response && response.success) {
+              const optimized = response.result
+
+              console.log('[PromptPrune] Optimization response:', {
+                success: response.success,
+                resultType: typeof optimized,
+                resultLength: typeof optimized === 'string' ? optimized.length : 'N/A',
+                originalLength: text.length,
+                preview: typeof optimized === 'string' ? optimized.substring(0, 100) : optimized
+              })
+
+              // Ensure we have a valid string result
+              if (typeof optimized !== 'string') {
+                console.error('[PromptPrune] Invalid optimized result type:', typeof optimized, optimized)
+                throw new Error('Optimization returned invalid result')
+              }
+
+              // Remove loading notification
+              if (loadingNotification) loadingNotification.remove()
+
+              // Show preview modal with optimized result
+              const previewModal = getPreviewModal()
+              previewModal.show(text, optimized, (newText) => {
+                if (target) {
+                  setText(target, newText)
+                  showNotification("✅ Prompt optimized successfully", "success")
+                }
+              })
+            } else {
+              const errorMsg = response?.error || "Optimization failed"
+              console.error('[PromptPrune] Optimization error:', errorMsg)
+              if (loadingNotification) loadingNotification.remove()
+              showNotification(`Optimization failed: ${errorMsg}`, "error")
+            }
+          } catch (error) {
+            if (loadingNotification) loadingNotification.remove()
+            if (isExtCtxInvalid(error)) {
+              showNotification('Extension was updated. Please refresh the page to continue.', 'warning')
+            } else {
+              console.error('[PromptPrune] Optimization error:', error)
+              const errorMsg = error instanceof Error ? error.message : String(error)
+              
+              // Check if it's a timeout
+              if (errorMsg.includes('timeout')) {
+                showNotification('Optimization is taking longer than expected. The model may still be downloading. Please try again in a moment.', "warning", 6000)
+              } else {
+                showNotification(`Optimization failed: ${errorMsg}`, "error")
+              }
+            }
+          } finally {
+            capsule.setLoading(false)
+          }
         }
       }
     })
@@ -2445,106 +3067,7 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
 
 
 
-  // Track if template was pre-filled
-  let templatePreFilled = false
 
-  // Pre-fill template for first prompt or follow-up
-  const preFillTemplate = (event?: Event) => {
-    // Don't pre-fill if user just cleared the textbox
-    if (textArea.hasAttribute("data-cleared-by-user")) {
-      return
-    }
-
-    // Don't pre-fill if event has preventRefill flag
-    if (event && (event as any).preventRefill) {
-      return
-    }
-
-    if (shouldPreFillTemplate(textArea)) {
-      const currentText = getText(textArea).trim()
-
-      // Only pre-fill if completely empty
-      if (currentText.length === 0) {
-        // Check if this is a follow-up message
-        // Use multiple methods: 
-        // 1) Check if role was provided before (per textarea or globally)
-        // 2) Check DOM for previous messages
-        // 3) Check if previous messages in DOM contain role
-        const hasRoleBefore = roleProvidedInFirstPrompt.get(textArea) || globalRoleProvided || false
-        const hasPreviousMessages = isFollowUpMessage(textArea)
-
-        // Also check if previous messages in the conversation contain role
-        let hasRoleInPreviousMessages = false
-        if (hasPreviousMessages) {
-          // Look for role in previous user messages
-          const messageSelectors = [
-            '[class*="user-message"]',
-            '[class*="chat-message"]',
-            '[data-role="user"]',
-          ]
-          for (const selector of messageSelectors) {
-            const messages = document.querySelectorAll(selector)
-            for (const msg of Array.from(messages)) {
-              if (msg === textArea || msg.contains(textArea)) continue
-              const text = msg.textContent?.trim() || ""
-              if (text.length > 10 && hasRoleInText(text)) {
-                hasRoleInPreviousMessages = true
-                break
-              }
-            }
-            if (hasRoleInPreviousMessages) break
-          }
-        }
-
-        const isFollowUp = hasRoleBefore || hasPreviousMessages || hasRoleInPreviousMessages
-
-        // Follow-up detection
-
-        // Use different template for follow-ups
-        // Follow-ups: Only Task (with default "Summarize in 100 words") and Context
-        // First prompts: Role, Task, Topic, Format, Tone
-        let template: string
-        if (isFollowUp) {
-          template = generateFollowUpTemplate()
-        } else {
-          template = generateFirstPromptTemplate()
-        }
-
-        // Set the template text
-        setText(textArea, template)
-        templatePreFilled = true
-
-        // Track if role is in the template (for future follow-up detection)
-        // This helps detect follow-ups even if DOM detection fails
-        if (!isFollowUp && hasRoleInText(template)) {
-          roleProvidedInFirstPrompt.set(textArea, true)
-          globalRoleProvided = true // Set global flag too
-        }
-
-        // Show minimal notification
-        setTimeout(() => {
-          const message = isFollowUp
-            ? "✨ Context-aware template ready"
-            : "✨ Template pre-filled for better results"
-          showMinimalNotification(message)
-        }, 300)
-
-        // For contenteditable divs, place cursor at end
-        if (textArea instanceof HTMLDivElement && textArea.isContentEditable) {
-          setTimeout(() => {
-            const range = document.createRange()
-            const selection = window.getSelection()
-            if (selection && textArea.firstChild) {
-              range.selectNodeContents(textArea)
-              range.collapse(false)
-              selection.removeAllRanges()
-              selection.addRange(range)
-            }
-          }, 10)
-        }
-      }
-    }
-  }
 
   // Reset original prompt when user significantly changes the text
   const resetOriginalPrompt = (event?: Event) => {
@@ -2612,9 +3135,6 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
     const capsule = getCapsuleUI()
     capsule.setTarget(textArea)
     capsule.show()
-
-    // Pre-fill template on first focus if it's the first prompt
-    preFillTemplate(undefined)
   }
 
   // Hide icon on blur (with delay to allow clicking)
@@ -2632,12 +3152,37 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
     }, 200)
   }
 
+  // Prefill template when textarea is focused and empty
+  function prefillTemplate() {
+    const currentText = getText(textArea).trim()
+    
+    // Only prefill if:
+    // 1. Textarea is empty
+    // 2. User hasn't explicitly cleared it
+    // 3. It's not already a template format
+    if (currentText.length === 0 && 
+        !textArea.hasAttribute("data-cleared-by-user") &&
+        !/^(Role:|Task:|Context:|Format:|Tone:)/m.test(currentText)) {
+      
+      const template = `Role: 
+Task: 
+Context: 
+Format: 
+Tone: `
+      
+      setText(textArea, template)
+      
+      // Focus and place cursor after "Role: "
+      textArea.focus()
+      if (textArea instanceof HTMLTextAreaElement || textArea instanceof HTMLInputElement) {
+        const rolePos = template.indexOf("Role: ") + 6
+        textArea.setSelectionRange(rolePos, rolePos)
+      }
+    }
+  }
+
   textArea.addEventListener("focus", (e) => {
     showIcon()
-    // Pre-fill template on focus if empty (but not if user cleared it)
-    if (!textArea.hasAttribute("data-cleared-by-user")) {
-      preFillTemplate(e)
-    }
   }, true)
   textArea.addEventListener("blur", hideIcon, true)
   textArea.addEventListener("input", (e) => {
@@ -2660,13 +3205,6 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
   const initialText = getText(textArea).trim()
   if (document.activeElement === textArea || initialText.length > 0) {
     showIcon()
-  } else {
-    // Pre-fill template on initial load if it's the first prompt (only if not cleared by user)
-    setTimeout(() => {
-      if (!textArea.hasAttribute("data-cleared-by-user")) {
-        preFillTemplate()
-      }
-    }, 500)
   }
 
   // Show icon when text is added or textarea is focused
@@ -2755,10 +3293,11 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
       return true // Blocked
     }
 
-    // Regex is clean - check with ML in background (non-blocking, with timeout)
+    // Regex is clean - check with ML engine (GLiNER + regex hybrid) in background (non-blocking, with timeout)
     // Don't block UI - if ML is slow, allow submission
     try {
-      const mlCheckPromise = Promise.resolve(detectSensitiveContent(textTrimmed))
+      const mlCheckPromise = detectPIIWithML(textTrimmed)
+      
       const timeoutPromise = new Promise<SensitiveContentResult>((resolve) => {
         setTimeout(() => resolve({
           hasSensitiveContent: false,
@@ -3040,7 +3579,7 @@ function initializeCapsuleForTextArea(textArea: HTMLTextAreaElement | HTMLDivEle
   ; (textArea as any).__testSensitiveDetection = (testText?: string) => {
     const text = testText || getText(textArea)
     // Use regex detection
-    Promise.resolve(detectSensitiveContent(text)).then(result => {
+    detectPIIWithML(text).then(result => {
       if (result.hasSensitiveContent) {
         showSensitiveContentWarning(textArea, text, result)
       }
@@ -3137,546 +3676,6 @@ function initializeRealTimeComponents(textArea: HTMLTextAreaElement | HTMLDivEle
   }
 }
 
-// Expose test functions globally for browser console testing
-// Note: Content scripts run in isolated world, so we need to inject into page context
-if (typeof window !== "undefined") {
-  // First, expose in content script context (for internal use)
-  ; (window as any).testComplexPrompt = testComplexPrompt
-    ; (window as any).quickTestShorten = quickTestShorten
-    ; (window as any).quickTestFrameworkSwitching = quickTestFrameworkSwitching
-    ; (window as any).testSmartOptimizer = testSmartOptimizer
-    ; (window as any).runAllPromptTests = runAllTests
-    ; (window as any).quickPromptTest = quickTest
-    ; (window as any).PROMPT_TEST_CASES = PROMPT_TEST_CASES
-
-  // DISABLED: Test bridge injection causes CSP violations
-  // Use content script context only for testing
-  function injectTestBridge() {
-    // Disabled to avoid CSP violations - test functions available in content script context only
-    return
-  }
-
-  // DISABLED: Test bridge injection code removed to avoid CSP violations
-  /*
-  function injectTestBridgeOriginal() {
-    try {
-      // Check if already injected
-      if ((document as any).__promptpruneBridgeInjected) {
-        console.log('[PromptPrune] Test bridge already injected, skipping')
-        return;
-      }
-      
-      // Get test cases data safely (only basic info to avoid circular refs)
-      const testCasesData = PROMPT_TEST_CASES.map(tc => ({
-        name: tc.name,
-        prompt: tc.prompt,
-        type: tc.type
-      }))
-      
-      const script = document.createElement('script')
-      script.setAttribute('data-promptprune', 'test-bridge')
-      
-      // Use a simpler approach that's more CSP-friendly
-      const bridgeCode = `
-(function() {
-  if (window.__promptpruneTestBridge) {
-    console.log('[PromptPrune] Bridge already exists');
-    return;
-  }
-  
-  console.log('[PromptPrune] Creating test bridge in page context...');
-  
-  window.__promptpruneTestBridge = {
-    runAllPromptTests: function() {
-      return new Promise((resolve, reject) => {
-        const requestId = 'test_' + Date.now() + '_' + Math.random();
-        
-        window.postMessage({
-          type: 'PROMPTPRUNE_TEST',
-          action: 'runAllTests',
-          requestId: requestId
-        }, '*');
-        
-        const listener = function(event) {
-          if (event.data && event.data.type === 'PROMPTPRUNE_TEST_RESULT' && event.data.requestId === requestId) {
-            window.removeEventListener('message', listener);
-            if (event.data.error) {
-              reject(new Error(event.data.error));
-            } else {
-              resolve(event.data.result);
-            }
-          }
-        };
-        window.addEventListener('message', listener);
-        
-        setTimeout(function() {
-          window.removeEventListener('message', listener);
-          reject(new Error('Test timeout after 60 seconds'));
-        }, 60000);
-      });
-    },
-    quickPromptTest: function(prompt) {
-      return new Promise((resolve, reject) => {
-        const requestId = 'test_' + Date.now() + '_' + Math.random();
-        
-        window.postMessage({
-          type: 'PROMPTPRUNE_TEST',
-          action: 'quickTest',
-          prompt: prompt,
-          requestId: requestId
-        }, '*');
-        
-        const listener = function(event) {
-          if (event.data && event.data.type === 'PROMPTPRUNE_TEST_RESULT' && event.data.requestId === requestId) {
-            window.removeEventListener('message', listener);
-            if (event.data.error) {
-              reject(new Error(event.data.error));
-            } else {
-              resolve(event.data.result);
-            }
-          }
-        };
-        window.addEventListener('message', listener);
-        
-        setTimeout(function() {
-          window.removeEventListener('message', listener);
-          reject(new Error('Test timeout after 10 seconds'));
-        }, 10000);
-      });
-    },
-    PROMPT_TEST_CASES: ${JSON.stringify(testCasesData)}
-  };
-  
-  window.runAllPromptTests = window.__promptpruneTestBridge.runAllPromptTests;
-  window.quickPromptTest = window.__promptpruneTestBridge.quickPromptTest;
-  window.PROMPT_TEST_CASES = window.__promptpruneTestBridge.PROMPT_TEST_CASES;
-  
-  // Test functions available silently in page context
-})();
-`
-      
-      // Use textContent instead of innerHTML to avoid CSP issues
-      script.textContent = bridgeCode
-      
-      // Inject into page - prefer head for better CSP compliance
-      const target = document.head || document.documentElement
-      target.insertBefore(script, target.firstChild)
-      
-      // Mark as injected
-      ;(document as any).__promptpruneBridgeInjected = true
-      
-      // Remove script after a short delay to clean up
-      setTimeout(() => {
-        if (script.parentNode) {
-          script.remove()
-        }
-      }, 1000)
-      
-      console.log('[PromptPrune] Test bridge injection script added to DOM')
-      
-      // Verify injection worked by checking after a delay
-      setTimeout(() => {
-        // Try to access the bridge from page context (this won't work from content script, but we can check if script executed)
-        const scriptInDOM = document.querySelector('script[data-promptprune="test-bridge"]')
-        if (scriptInDOM) {
-          console.log('[PromptPrune] Test bridge script found in DOM')
-        } else {
-          console.warn('[PromptPrune] Test bridge script not found in DOM - may have been removed or blocked by CSP')
-        }
-      }, 500)
-    } catch (error) {
-      console.error('[PromptPrune] Failed to inject test bridge:', error)
-    }
-  }
-  */
-
-  // DISABLED: Test bridge injection to avoid CSP violations
-  // Test functions are available in content script context only
-  // Users can access them via browser console in extension context
-
-  // Listen for messages from page context
-  window.addEventListener('message', async (event) => {
-    // Only accept messages from same window
-    if (event.source !== window) return
-
-    if (event.data && event.data.type === 'PROMPTPRUNE_TEST') {
-      console.log('[PromptPrune] Received test request:', event.data.action, 'requestId:', event.data.requestId)
-      try {
-        let result
-        if (event.data.action === 'runAllTests') {
-          console.log('[PromptPrune] Running all tests...')
-          const testResults = await runAllTests()
-          // Transform to match popup expectations
-          result = {
-            summary: {
-              total: testResults.total,
-              passed: testResults.passed,
-              failed: testResults.failed
-            },
-            tests: testResults.results.map(r => ({
-              name: r.testCase.name,
-              passed: r.passed,
-              error: r.errors.length > 0 ? r.errors.join('; ') : undefined,
-              warnings: r.warnings,
-              parsed: r.parsed,
-              frameworkOutput: r.frameworkOutput,
-              smartOutput: r.smartOutput
-            }))
-          }
-          console.log('[PromptPrune] Test results:', result.summary)
-        } else if (event.data.action === 'quickTest') {
-          console.log('[PromptPrune] Running quick test for:', event.data.prompt)
-          result = await quickTest(event.data.prompt)
-        } else {
-          throw new Error('Unknown test action: ' + event.data.action)
-        }
-
-        // Send result back to page context
-        window.postMessage({
-          type: 'PROMPTPRUNE_TEST_RESULT',
-          requestId: event.data.requestId,
-          result: result
-        }, '*')
-        console.log('[PromptPrune] Test result sent back, requestId:', event.data.requestId, 'result keys:', Object.keys(result || {}))
-      } catch (error) {
-        console.error('[PromptPrune] Test failed:', error)
-        window.postMessage({
-          type: 'PROMPTPRUNE_TEST_RESULT',
-          requestId: event.data.requestId,
-          error: error instanceof Error ? error.message : String(error)
-        }, '*')
-      }
-    }
-  })
-
-    // Expose model diagnostic functions
-    ; (window as any).checkModelStatus = async () => {
-      const unifiedModel = getUnifiedModelManager()
-      const status = unifiedModel.getModelStatus()
-      const cached = await unifiedModel.isCached()
-      console.log('[PromptPrune] Model Status:', {
-        ...status,
-        cached,
-        timestamp: new Date().toISOString()
-      })
-      return { ...status, cached }
-    }
-
-    ; (window as any).forceModelRetry = async () => {
-      const unifiedModel = getUnifiedModelManager()
-      console.log('[PromptPrune] Forcing model retry...')
-      await unifiedModel.forceRetryInitialization()
-      return await (window as any).checkModelStatus()
-    }
-
-    ; (window as any).testHuggingFaceAccess = async () => {
-      console.log('[PromptPrune] Testing HuggingFace access...')
-
-      // First, check if we can access the manifest
-      let manifestPermissions: string[] = []
-      try {
-        const manifestUrl = chrome.runtime.getURL('manifest.json')
-        const manifestResponse = await fetch(manifestUrl)
-        if (manifestResponse.ok) {
-          const manifest = await manifestResponse.json()
-          manifestPermissions = manifest.host_permissions || []
-          console.log('[PromptPrune] Manifest host_permissions:', manifestPermissions)
-
-          const hasHuggingFace = manifestPermissions.some((p: string) =>
-            p.includes('huggingface.co')
-          )
-          if (!hasHuggingFace) {
-            console.error('[PromptPrune] ❌ HuggingFace permissions NOT FOUND in manifest!')
-            console.error('[PromptPrune] Current permissions:', manifestPermissions)
-            console.error('[PromptPrune] 🔧 FIX: Rebuild extension and reload!')
-            return {
-              results: [],
-              allAccessible: false,
-              manifestCheck: 'FAILED - HuggingFace permissions missing',
-              manifestPermissions
-            }
-          } else {
-            console.log('[PromptPrune] ✅ HuggingFace permissions found in manifest')
-          }
-        }
-      } catch (error: any) {
-        console.warn('[PromptPrune] Could not check manifest:', error.message)
-      }
-
-      const testUrls = [
-        'https://huggingface.co/VisheshKJha/tk-prompt-prune/resolve/main/config.json',
-        'https://huggingface.co/VisheshKJha/tk-prompt-prune/resolve/main/model_quantized.onnx',
-        'https://huggingface.co/VisheshKJha/tk-prompt-prune/resolve/main/model.onnx',
-        'https://huggingface.co/VisheshKJha/tk-prompt-prune/resolve/main/tokenizer.json',
-      ]
-
-      const results: any[] = []
-      for (const url of testUrls) {
-        try {
-          console.log(`[PromptPrune] Testing: ${url}`)
-          const response = await fetch(url, { method: 'GET', redirect: 'follow' })
-
-          // Check if we got redirected
-          const finalUrl = response.url
-          const wasRedirected = finalUrl !== url
-
-          // Try to read the response to see what we actually got
-          const contentType = response.headers.get('content-type') || 'unknown'
-          const isHTML = contentType.includes('text/html')
-          const isJSON = contentType.includes('application/json')
-          const isBinary = contentType.includes('application/octet-stream') || contentType.includes('application/x-')
-
-          // Read first few bytes to check if it's HTML
-          let firstBytes = ''
-          let isActuallyHTML = false
-          try {
-            const clone = response.clone()
-            const text = await clone.text()
-            firstBytes = text.substring(0, 200)
-            isActuallyHTML = text.trim().startsWith('<!DOCTYPE') || text.trim().startsWith('<!doctype') || text.trim().startsWith('<html')
-          } catch (e) {
-            // If we can't read it, that's fine
-          }
-
-          results.push({
-            url,
-            finalUrl: wasRedirected ? finalUrl : undefined,
-            wasRedirected,
-            status: response.status,
-            ok: response.ok,
-            contentType,
-            isHTML,
-            isActuallyHTML,
-            isJSON,
-            isBinary,
-            accessible: response.ok && !isHTML && !isActuallyHTML,
-            firstBytes: firstBytes.substring(0, 100) // First 100 chars for debugging
-          })
-
-          console.log(`[PromptPrune] ${url}:`, {
-            status: response.status,
-            finalUrl: wasRedirected ? finalUrl : 'same',
-            contentType,
-            isHTML,
-            isActuallyHTML,
-            accessible: response.ok && !isHTML && !isActuallyHTML,
-            issue: isActuallyHTML ? 'Returning HTML instead of file (404 or auth page)' :
-              isHTML ? 'Content-Type says HTML' :
-                response.ok ? 'OK' : 'Failed'
-          })
-
-          if (isActuallyHTML) {
-            console.error(`[PromptPrune] ⚠️ Got HTML response! First 100 chars:`, firstBytes.substring(0, 100))
-          }
-        } catch (error: any) {
-          results.push({
-            url,
-            error: error.message,
-            accessible: false
-          })
-          console.error(`[PromptPrune] ${url}:`, error.message)
-
-          // Check if it's a CORS/permission error
-          if (error.message.includes('CORS') || error.message.includes('Failed to fetch')) {
-            console.error('[PromptPrune] ⚠️ CORS/Permission error detected!')
-            console.error('[PromptPrune] This means the extension cannot access HuggingFace')
-            console.error('[PromptPrune] 🔧 FIX: Rebuild extension and reload!')
-          }
-        }
-      }
-
-      const allAccessible = results.every(r => r.accessible)
-      if (!allAccessible) {
-        console.error('[PromptPrune] ❌ HuggingFace access test FAILED!')
-        console.error('[PromptPrune] This usually means:')
-        console.error('  1. Extension manifest missing https://huggingface.co/* in host_permissions')
-        console.error('  2. Extension not reloaded after manifest update')
-        console.error('  3. CORS issue (check browser console for CORS errors)')
-        console.error('  4. Model files missing on HuggingFace (check Files tab)')
-        console.error('[PromptPrune] 🔧 FIX: Reload the extension in chrome://extensions/')
-      } else {
-        console.log('[PromptPrune] ✅ HuggingFace access test PASSED!')
-      }
-
-      return {
-        results,
-        allAccessible,
-        manifestPermissions,
-        manifestCheck: manifestPermissions.length > 0 ? 'OK' : 'Could not check'
-      }
-    }
-
-    // Test portal connectivity
-    ; (window as any).testPortalConnection = async () => {
-      console.log('[PromptPrune] Testing portal connection...')
-      const { authService } = await import('~/lib/auth-service')
-
-      const testData = {
-        userEmail: 'test@example.com',
-        platform: 'test',
-        prompt: 'Test prompt for portal connectivity',
-        detectedItems: [],
-        riskScore: 0,
-        metadata: { test: true }
-      }
-
-      console.log('[PromptPrune] Attempting to send test data to portal...')
-      await authService.sendAuditLog(testData)
-      console.log('[PromptPrune] Check console above for portal connection results')
-      return 'Check console for results'
-    }
-
-    // Non-async wrapper for testHuggingFaceAccess (for console use)
-    ; (window as any).testHuggingFace = () => {
-      console.log('[PromptPrune] Running HuggingFace access test...')
-      return (window as any).testHuggingFaceAccess().then((result: any) => {
-        console.log('[PromptPrune] Test complete!')
-        console.log('[PromptPrune] Results:', result)
-        return result
-      }).catch((error: any) => {
-        console.error('[PromptPrune] Test failed:', error)
-        return { error: error.message }
-      })
-    }
-
-    // Non-async wrapper for checkModelStatus
-    ; (window as any).checkModel = () => {
-      console.log('[PromptPrune] Checking model status...')
-      return (window as any).checkModelStatus().then((result: any) => {
-        console.log('[PromptPrune] Model status:', result)
-        return result
-      }).catch((error: any) => {
-        console.error('[PromptPrune] Check failed:', error)
-        return { error: error.message }
-      })
-    }
-
-    // Non-async wrapper for forceModelRetry
-    ; (window as any).retryModel = () => {
-      console.log('[PromptPrune] Forcing model retry...')
-      return (window as any).forceModelRetry().then((result: any) => {
-        console.log('[PromptPrune] Retry complete!')
-        console.log('[PromptPrune] New status:', result)
-        return result
-      }).catch((error: any) => {
-        console.error('[PromptPrune] Retry failed:', error)
-        return { error: error.message }
-      })
-    }
-
-    // Test functions for Intent and Framework Matching
-    ; (window as any).testIntentAndFramework = async (prompt?: string) => {
-      const unifiedModel = getUnifiedModelManager()
-      const testPrompt = prompt || "Write a blog post about artificial intelligence"
-
-      console.log("🧪 Testing Intent & Framework Matching")
-      console.log("=".repeat(80))
-      console.log(`Prompt: "${testPrompt}"`)
-      console.log("")
-
-      try {
-        // Test Intent Classification
-        console.log("📊 Testing Intent Classification...")
-        const intentResult = await unifiedModel.classifyIntent(testPrompt)
-        console.log("✅ Intent Result:")
-        console.log(`   Intent: ${intentResult.intent}`)
-        console.log(`   Confidence: ${(intentResult.confidence * 100).toFixed(1)}%`)
-        console.log("   All Intents:")
-        intentResult.allIntents.forEach((i, idx) => {
-          console.log(`   ${idx + 1}. ${i.intent}: ${(i.score * 100).toFixed(1)}%`)
-        })
-
-        console.log("")
-
-        // Test Framework Matching
-        console.log("📊 Testing Framework Matching...")
-        const frameworkResult = await unifiedModel.matchFramework(testPrompt)
-        console.log("✅ Framework Result:")
-        console.log(`   Framework: ${frameworkResult.framework}`)
-        console.log(`   Score: ${(frameworkResult.score * 100).toFixed(1)}%`)
-        console.log("   All Frameworks:")
-        frameworkResult.allScores.forEach((f, idx) => {
-          console.log(`   ${idx + 1}. ${f.framework}: ${(f.score * 100).toFixed(1)}%`)
-        })
-
-        return {
-          intent: intentResult,
-          framework: frameworkResult
-        }
-      } catch (error) {
-        console.error("❌ Test failed:", error)
-        return { error: error instanceof Error ? error.message : String(error) }
-      }
-    }
-
-    // Test suite for multiple prompts
-    ; (window as any).testIntentFrameworkSuite = async () => {
-      const testCases = [
-        { name: "Content Creation", prompt: "Write a blog post about AI", expectedFramework: "roses", expectedIntent: "content creation" },
-        { name: "Professional", prompt: "Write a professional email to a client", expectedFramework: "race", expectedIntent: "professional communication" },
-        { name: "Reasoning", prompt: "How does photosynthesis work? Explain step by step", expectedFramework: "cot", expectedIntent: "explanation" },
-        { name: "Code Generation", prompt: "Write a Python function to sort a list", expectedFramework: "create", expectedIntent: "code generation" },
-        { name: "Data Analysis", prompt: "Analyze this sales data and create a report", expectedFramework: "race", expectedIntent: "data analysis" },
-        { name: "Creative Writing", prompt: "Write a short story about a robot", expectedFramework: "roses", expectedIntent: "creative writing" },
-        { name: "Tutorial", prompt: "Create a step-by-step guide on how to bake a cake", expectedFramework: "guide", expectedIntent: "explanation" }
-      ]
-
-      const unifiedModel = getUnifiedModelManager()
-      console.log("🧪 Running Intent & Framework Test Suite")
-      console.log("=".repeat(80))
-
-      const results = []
-
-      for (const testCase of testCases) {
-        console.log(`\n📝 Test: ${testCase.name}`)
-        console.log(`   Prompt: "${testCase.prompt}"`)
-
-        try {
-          const intentResult = await unifiedModel.classifyIntent(testCase.prompt)
-          const frameworkResult = await unifiedModel.matchFramework(testCase.prompt)
-
-          const intentMatch = intentResult.intent.toLowerCase() === testCase.expectedIntent.toLowerCase()
-          const frameworkMatch = frameworkResult.framework.toLowerCase() === testCase.expectedFramework.toLowerCase()
-
-          console.log(`   Intent: ${intentResult.intent} (${(intentResult.confidence * 100).toFixed(1)}%) ${intentMatch ? '✅' : '❌'} Expected: ${testCase.expectedIntent}`)
-          console.log(`   Framework: ${frameworkResult.framework} (${(frameworkResult.score * 100).toFixed(1)}%) ${frameworkMatch ? '✅' : '❌'} Expected: ${testCase.expectedFramework}`)
-
-          results.push({
-            name: testCase.name,
-            prompt: testCase.prompt,
-            intent: { actual: intentResult.intent, expected: testCase.expectedIntent, match: intentMatch },
-            framework: { actual: frameworkResult.framework, expected: testCase.expectedFramework, match: frameworkMatch },
-            passed: intentMatch && frameworkMatch
-          })
-        } catch (error) {
-          console.error(`   ❌ Error: ${error instanceof Error ? error.message : String(error)}`)
-          results.push({
-            name: testCase.name,
-            prompt: testCase.prompt,
-            error: error instanceof Error ? error.message : String(error),
-            passed: false
-          })
-        }
-      }
-
-      // Summary
-      console.log("\n" + "=".repeat(80))
-      console.log("📊 TEST SUMMARY")
-      console.log("=".repeat(80))
-      const passed = results.filter(r => r.passed).length
-      const total = results.length
-      const intentPassed = results.filter(r => r.intent && r.intent.match).length
-      const frameworkPassed = results.filter(r => r.framework && r.framework.match).length
-
-      console.log(`\n✅ Overall: ${passed}/${total} tests passed (${(passed / total * 100).toFixed(1)}%)`)
-      console.log(`✅ Intent Classification: ${intentPassed}/${total} correct (${(intentPassed / total * 100).toFixed(1)}%)`)
-      console.log(`✅ Framework Matching: ${frameworkPassed}/${total} correct (${(frameworkPassed / total * 100).toFixed(1)}%)`)
-
-      return results
-    }
-
-  // Test functions available silently in content script context
-}
 
 // Inject design system CSS
 function injectDesignSystemCSS(): void {
@@ -3870,7 +3869,7 @@ function attachGlobalSensitiveContentListeners() {
 
           // If regex is clean, check with ML in background (non-blocking)
           // But don't block UI - allow submission if ML check takes too long
-          const mlCheckPromise = Promise.resolve(detectSensitiveContent(textTrimmed))
+          const mlCheckPromise = detectPIIWithML(textTrimmed)
           const timeoutPromise = new Promise<SensitiveContentResult>((resolve) => {
             setTimeout(() => resolve({
               hasSensitiveContent: false,
@@ -4053,7 +4052,7 @@ function attachGlobalSensitiveContentListeners() {
 
           // If regex is clean, check with ML in background (non-blocking)
           // But don't block UI - allow submission if ML check takes too long
-          const mlCheckPromise = Promise.resolve(detectSensitiveContent(textTrimmed))
+          const mlCheckPromise = detectPIIWithML(textTrimmed)
           const timeoutPromise = new Promise<SensitiveContentResult>((resolve) => {
             setTimeout(() => resolve({
               hasSensitiveContent: false,
@@ -4152,12 +4151,22 @@ async function checkAndStartAutoDownload(): Promise<void> {
     // Check if shared models are ready (stored in background service worker)
     const result = await new Promise<{ [key: string]: any }>((resolve) => {
       if (typeof chrome !== 'undefined' && chrome.storage) {
-        chrome.storage.local.get([
-          'promptprune-models-ready',
-          'promptprune-model-download-attempted',
-          'promptprune-model-download-status',
-          'promptprune-model-download-progress'
-        ], resolve)
+        try {
+          chrome.storage.local.get([
+            'promptprune-models-ready',
+            'promptprune-model-download-attempted',
+            'promptprune-model-download-status',
+            'promptprune-model-download-progress',
+            'pii_model_progress',
+            'promptprune-model-download-error'
+          ], resolve)
+        } catch (e) {
+          if (isExtCtxInvalid(e)) {
+            resolve({})
+            return
+          }
+          throw e
+        }
       } else {
         console.warn('[PromptPrune] ⚠️ Chrome storage not available')
         resolve({})
@@ -4167,41 +4176,170 @@ async function checkAndStartAutoDownload(): Promise<void> {
     const modelsReady = result['promptprune-models-ready'] === true
     const downloadAttempted = result['promptprune-model-download-attempted'] === 'true'
     const downloadStatus = result['promptprune-model-download-status'] || 'unknown'
-    const downloadProgress = result['promptprune-model-download-progress'] || 0
+    const downloadProgress = result['promptprune-model-download-progress'] ?? result['pii_model_progress'] ?? 0
 
-    // Clear status logging
+    // Poll to update overlay and hide when done/failed
+    let pollTid: ReturnType<typeof setInterval> | null = null
+    let pollCount = 0
+    const startPoll = () => {
+      if (pollTid) return
+      console.log('[PromptPrune] 📊 Poll: started (every 600ms), will hide overlay on modelsReady/failed or after 90s')
+      // Timeout: if still downloading after 45s, dismiss overlay and let user continue with default mode
+      setTimeout(() => {
+        if (document.getElementById(MODEL_DOWNLOAD_OVERLAY_ID) && pollTid) {
+          clearInterval(pollTid)
+          pollTid = null
+          hideModelDownloadOverlay()
+          if (typeof chrome !== 'undefined' && chrome.storage?.local?.set) {
+            chrome.storage.local.set({ 'promptprune-model-download-status': 'timeout' })
+          }
+          showNotification('Download is taking longer than expected. Using default mode.', 'warning', 5000)
+        }
+      }, 45_000)
+      pollTid = setInterval(() => {
+        pollCount += 1
+        try {
+          if (typeof chrome === 'undefined' || !chrome.storage) return
+          chrome.storage.local.get([
+            'promptprune-models-ready',
+            'promptprune-model-download-status',
+            'pii_model_progress',
+            'promptprune-model-download-progress'
+          ], (r: Record<string, any>) => {
+            try {
+              // Check for both models ready
+              chrome.storage.local.get(['pii-model-ready', 'optimizer-model-ready'], (modelStatus: Record<string, any>) => {
+                const bothReady = r['promptprune-models-ready'] === true || 
+                                 (modelStatus['pii-model-ready'] === true && modelStatus['optimizer-model-ready'] === true);
+                
+                if (bothReady) {
+                  console.log('[PromptPrune] 📊 Poll: Both models ready → hiding overlay')
+                  console.log('[PromptPrune] ✅ PII Model: Ready | Optimizer Model: Ready')
+                  console.log('[PromptPrune] 🎉 Download complete: Both AI models are now available!')
+                  if (pollTid) clearInterval(pollTid)
+                  pollTid = null
+                  hideModelDownloadOverlay()
+                  showNotification('✅ Both AI models downloaded successfully! PII detection and prompt optimization are now available.', 'success', 5000)
+                  return
+                }
+              })
+              
+              if (r['promptprune-models-ready'] === true) {
+                // Fallback for old status format
+                if (pollTid) clearInterval(pollTid)
+                pollTid = null
+                hideModelDownloadOverlay()
+                showNotification('✅ Both AI models downloaded successfully!', 'success', 5000)
+                return
+              }
+              if (r['promptprune-model-download-status'] === 'failed' || r['promptprune-model-download-status'] === 'timeout') {
+                console.log('[PromptPrune] 📊 Poll: status=' + r['promptprune-model-download-status'] + ' → hiding overlay')
+                if (pollTid) clearInterval(pollTid)
+                pollTid = null
+                hideModelDownloadOverlay()
+                showNotification('Using default mode. You can continue.', 'info', 4000)
+                return
+              }
+              // Background download - hide overlay but continue polling silently
+              if (r['promptprune-model-download-status'] === 'downloading-background') {
+                hideModelDownloadOverlay()
+                // Continue polling but don't show overlay
+                return // Don't update overlay if in background mode
+              }
+              // Calculate progress from both models
+              const piiProgress = r['pii_model_progress'] ?? 0
+              const optProgress = r['optimizer_model_progress'] ?? 0
+              // Weighted: PII ~50MB, Optimizer ~150MB, so PII = 25%, Optimizer = 75%
+              const totalProgress = Math.round((Number(piiProgress) * 0.25) + (Number(optProgress) * 0.75))
+              const pctNum = totalProgress || Number(r['promptprune-model-download-progress']) || 0
+              
+              // Only update overlay if it exists (not in background mode)
+              if (document.getElementById(MODEL_DOWNLOAD_OVERLAY_ID)) {
+                updateModelDownloadOverlay(pctNum)
+              }
+              if (pollCount === 5 && pctNum === 0) {
+                console.log('[PromptPrune] 📊 Poll: 5 ticks, still 0% — check Service Worker console for [ServiceWorker] / [ML Engine] logs')
+              }
+              // After ~15s at 0%, show hint: Groot or SW might not be running
+              if (pollCount >= 25 && pctNum === 0) {
+                const h = document.getElementById('promptprune-download-hint')
+                if (h) {
+                  h.style.display = 'block'
+                  h.textContent = ''
+                }
+              }
+            } catch (e) {
+              if (isExtCtxInvalid(e) && pollTid) {
+                clearInterval(pollTid)
+                pollTid = null
+                hideModelDownloadOverlay()
+              }
+            }
+          })
+        } catch (e) {
+          if (isExtCtxInvalid(e) && pollTid) {
+            clearInterval(pollTid)
+            pollTid = null
+            hideModelDownloadOverlay()
+          }
+        }
+      }, 600)
+    }
+
     if (modelsReady) {
       console.log('[PromptPrune] ✅ Shared models: READY')
-      console.log('[PromptPrune] 📊 Models available for ALL platforms (ChatGPT, Copilot, Gemini, etc.)')
-      console.log('[PromptPrune] 📊 Storage: ~53MB (shared, not per-platform)')
-    } else if (downloadStatus === 'downloading') {
-      console.log(`[PromptPrune] ⏳ Shared models: DOWNLOADING (${downloadProgress}%)`)
-      console.log('[PromptPrune] 💡 This happens once - models will be shared across all platforms')
-    } else if (downloadStatus === 'failed') {
-      console.log('[PromptPrune] ⚠️ Shared models: DOWNLOAD FAILED')
-      console.log('[PromptPrune] 💡 Extension will use regex fallback (still works, just less accurate)')
-      console.log('[PromptPrune] 💡 Error:', result['promptprune-model-download-error'] || 'Unknown')
-    } else if (!downloadAttempted) {
-      console.log('[PromptPrune] 📥 Shared models: NOT DOWNLOADED')
-      console.log('[PromptPrune] 💡 Requesting download in background...')
-
-      // Request model initialization in background service worker
-      if (typeof chrome !== 'undefined' && chrome.runtime) {
-        chrome.runtime.sendMessage({ type: 'INIT_MODELS' }, (response) => {
-          if (chrome.runtime.lastError) {
-            console.error('[PromptPrune] ❌ Failed to request model init:', chrome.runtime.lastError.message || chrome.runtime.lastError)
-          } else if (response?.success) {
-            console.log('[PromptPrune] ✅ Download started in background service worker')
-            console.log('[PromptPrune] 📊 Check background service worker console for progress')
-          } else if (response?.error) {
-            console.error('[PromptPrune] ❌ Model init failed:', response.error)
-          }
-        })
-      }
-    } else {
-      console.log('[PromptPrune] ⏭️ Shared models: Download previously attempted')
+      return
     }
+    if (downloadStatus === 'downloading' || downloadStatus === 'downloading-background') {
+      console.log(`[PromptPrune] ⏳ Shared models: DOWNLOADING (${downloadProgress}%)`)
+      // Only show overlay if not in background mode
+      if (downloadStatus === 'downloading') {
+        createModelDownloadOverlay()
+        updateModelDownloadOverlay(downloadProgress)
+        startPoll()
+      } else {
+        // Background download - just poll silently
+        startPoll()
+      }
+      return
+    }
+    if (downloadStatus === 'failed' || downloadStatus === 'timeout') {
+      console.log('[PromptPrune] ⚠️ Shared models:', downloadStatus === 'timeout' ? 'DOWNLOAD TIMED OUT' : 'DOWNLOAD FAILED')
+      showNotification('Using default mode. You can continue.', 'info', 4000)
+      return
+    }
+    if (!downloadAttempted) {
+      console.log('[PromptPrune] 📥 Shared models: NOT DOWNLOADED — showing one-time download screen')
+      createModelDownloadOverlay()
+      updateModelDownloadOverlay(0)
+      startPoll()
+      if (typeof chrome !== 'undefined' && chrome.runtime) {
+        try {
+          console.log('[PromptPrune] 📤 Sending INIT_MODELS to background (check Service Worker console for [ServiceWorker] / [ML Engine] logs)')
+          chrome.runtime.sendMessage({ type: 'INIT_MODELS' }, (response) => {
+            if (chrome.runtime.lastError) {
+              console.error('[PromptPrune] ❌ INIT_MODELS callback: lastError=', chrome.runtime.lastError.message || chrome.runtime.lastError)
+              if (pollTid) { clearInterval(pollTid); pollTid = null }
+              hideModelDownloadOverlay()
+              showNotification('Extension couldn\'t start. Reload the extension (chrome://extensions) and try again.', 'error', 6000)
+            } else if (response?.success) {
+              console.log('[PromptPrune] ✅ INIT_MODELS callback: success, download started in background')
+            } else if (response?.error) {
+              console.error('[PromptPrune] ❌ INIT_MODELS callback: error=', response.error)
+            } else {
+              console.warn('[PromptPrune] ⚠️ INIT_MODELS callback: no lastError, response=', response)
+            }
+          })
+        } catch (e) {
+          if (isExtCtxInvalid(e)) return
+          throw e
+        }
+      }
+      return
+    }
+    console.log('[PromptPrune] ⏭️ Shared models: Download previously attempted')
   } catch (error) {
+    if (isExtCtxInvalid(error)) return
     console.error('[PromptPrune] ❌ Model check failed:', error)
   }
 }
@@ -4214,6 +4352,31 @@ attachGlobalSensitiveContentListeners()
 
 // Listen for auth state changes from popup
 if (typeof chrome !== 'undefined' && chrome.runtime) {
+  // Listen for model download completion (multiple methods for reliability)
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === 'MODELS_DOWNLOADED') {
+      console.log('[PromptPrune] 📨 Received MODELS_DOWNLOADED message - both models ready!')
+      console.log('[PromptPrune] ✅ PII Model: Ready | Optimizer Model: Ready')
+      console.log('[PromptPrune] 🎉 Download complete: Both AI models are now available!')
+      hideModelDownloadOverlay()
+      showNotification('✅ Both AI models downloaded successfully! PII detection and prompt optimization are now available.', 'success', 5000)
+      return false
+    }
+  })
+  
+  // Also listen for storage changes (backup method)
+  if (typeof chrome !== 'undefined' && chrome.storage) {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local' && changes['models-download-complete']?.newValue === true) {
+        console.log('[PromptPrune] 📨 Storage change detected - both models ready!')
+        console.log('[PromptPrune] ✅ PII Model: Ready | Optimizer Model: Ready')
+        console.log('[PromptPrune] 🎉 Download complete: Both AI models are now available!')
+        hideModelDownloadOverlay()
+        showNotification('✅ Both AI models downloaded successfully! PII detection and prompt optimization are now available.', 'success', 5000)
+      }
+    })
+  }
+  
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'AUTH_STATE_CHANGED') {
       updateCapsuleAuthState(message.loggedIn)

@@ -12,11 +12,6 @@ import {
   processPromptIntelligently,
   extractIntent
 } from "./intelligent-processor"
-import {
-  parseStructuredPrompt,
-  convertStructuredToNatural,
-  detectFrameworkFromStructure
-} from "./prompt-parser"
 import { detectFields } from "./field-detector"
 import { getHFIntentExtractor } from "./hf-intent-extractor"
 
@@ -37,6 +32,18 @@ export interface ParsedPrompt {
   role?: string
   style?: string
   examples?: string[]
+  keyTerms?: string[]
+  action?: string
+  topic?: string
+}
+
+/** Minimal parsed prompt for ranking fallback when parse times out */
+function getMinimalParsed(prompt: string): ParsedPrompt {
+  const t = (prompt && prompt.trim()) || ''
+  return {
+    intent: t,
+    task: t || 'write about the specified topic',
+  }
 }
 
 /**
@@ -111,10 +118,10 @@ function generateExample(task: string, framework: string): string {
   if (!task || !task.trim()) {
     return "A well-structured example that demonstrates the desired output format"
   }
-  
+
   const taskLower = task.toLowerCase()
   const cleanTask = cleanText(task)
-  
+
   // Generate examples based on task type and framework
   if (taskLower.includes('content') || taskLower.includes('article') || taskLower.includes('blog')) {
     if (framework === "ROSES") {
@@ -133,7 +140,7 @@ function generateExample(task: string, framework: string): string {
   } else if (taskLower.includes('summary') || taskLower.includes('summary')) {
     return `A concise summary highlighting key points and main takeaways from ${cleanTask.split(/[.!?]/)[0].substring(0, 50)}`
   }
-  
+
   // Default example
   return `A high-quality example that demonstrates best practices for ${cleanTask.split(/[.!?]/)[0].substring(0, 80)}`
 }
@@ -141,8 +148,13 @@ function generateExample(task: string, framework: string): string {
 /**
  * Parse a prompt to extract key components using NLP
  * Enhanced with HF models for better semantic understanding
+ * @param options.skipHF - When true, skip HF intent extraction (faster; used in rankFrameworks to avoid timeouts)
  */
-async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise<ParsedPrompt> {
+async function parsePrompt(
+  prompt: string,
+  isFollowUp: boolean = false,
+  options?: { skipHF?: boolean }
+): Promise<ParsedPrompt> {
   // Handle null, undefined, or empty prompts
   if (!prompt || typeof prompt !== 'string') {
     return {
@@ -157,7 +169,7 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
       keyTerms: undefined
     }
   }
-  
+
   const trimmed = prompt.trim()
   if (!trimmed || trimmed.length === 0) {
     return {
@@ -172,7 +184,7 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
       keyTerms: undefined
     }
   }
-  
+
   // Handle template-only prompts (fields with no values)
   // Check if prompt only contains field labels like "Role:\nAction:\nTopic:" with no actual values
   const templateOnlyPattern = /^(?:\w+:\s*\n?)+$/
@@ -191,10 +203,10 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
       keyTerms: undefined
     }
   }
-  
+
   // Check if prompt is in structured format (Role:, Action:, Topic:)
   const structured = parseStructuredPrompt(trimmed)
-  
+
   // If structured, convert to natural language for better processing
   let workingPrompt = prompt
   if (structured.isStructured) {
@@ -203,27 +215,29 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
       workingPrompt = natural
     }
   }
-  
+
   // Use intelligent processor
   const processed = processPromptIntelligently(workingPrompt)
-  
+
   // Use the corrected and structured version
   const expanded = processed.structured || processed.corrected
   const cleanedPrompt = processed.corrected
   const lower = cleanedPrompt.toLowerCase()
-  
+
   // Use detectFields to get structured field information
   const detectedFields = detectFields(prompt)
-  
-  // Try to enhance with HF models (async, but we'll use it if available)
+
+  // Try to enhance with HF models (async); skip when options.skipHF to avoid timeouts in rankFrameworks
   let hfEnhanced: any = null
-  try {
-    const hfExtractor = getHFIntentExtractor()
-    hfEnhanced = await hfExtractor.extractIntent(cleanedPrompt, extractIntent)
-  } catch (error) {
-    console.warn('[parsePrompt] HF extraction failed, using fallback:', error)
+  if (!options?.skipHF) {
+    try {
+      const hfExtractor = getHFIntentExtractor()
+      hfEnhanced = await hfExtractor.extractIntent(cleanedPrompt, extractIntent)
+    } catch (error) {
+      console.warn('[parsePrompt] HF extraction failed, using fallback:', error)
+    }
   }
-  
+
   // Extract role - prefer structured format, then detected fields, then NLP (skip for follow-ups)
   // CRITICAL: Always preserve structured role to ensure "Marketing Manager", "Sales Rep" appear in outputs
   let role: string | undefined
@@ -237,17 +251,17 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
       role = extractRoleNLP(cleanedPrompt) || undefined
     }
   }
-  
+
   // Use structured components if available, otherwise use intelligent intent extraction
   let action: string
   let topic: string
   let format: string | undefined
   let tone: string | undefined
-  
+
   if (structured.isStructured) {
     // For structured prompts, extract directly from structure
     // IMPORTANT: Preserve the original structured values to ensure they appear in framework outputs
-    
+
     // Don't use "Format: text" as action - check if action is actually a format field
     let extractedAction = structured.action
     if (extractedAction) {
@@ -261,10 +275,10 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
     topic = structured.topic || processed.intent.topic || "the specified topic"
     format = structured.format
     tone = structured.tone
-    
+
     // Clean action - remove "about" if it's already in the action, but preserve the original role
     action = action.replace(/\s+about\s+.*$/i, "").trim()
-    
+
     // CRITICAL: Always use structured role if available (preserves "Marketing Manager", "Sales Rep", etc.)
     if (structured.role) {
       role = structured.role.trim()
@@ -284,7 +298,7 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
       tone = intelligentIntent.tone || (detectedFields.hasTone ? detectedFields.tone : undefined)
     }
   }
-  
+
   // Use detected fields if structured format didn't provide them
   if (detectedFields.hasTask && detectedFields.task && !structured.isStructured) {
     // Clean detected task - remove "about" if present
@@ -295,10 +309,10 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
   if (detectedFields.hasTopic && detectedFields.topic && !topic) {
     topic = detectedFields.topic
   }
-  
+
   // Build task from intent - use FULL context from prompt
   let task = ''
-  
+
   // For natural language prompts, try to extract the full task directly
   // "write a funny email to my boss about being late" -> "write a funny email to my boss about being late"
   // "it's my responsibility to write cold email" -> "write cold email"
@@ -315,7 +329,7 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
         task = `${extractedAction} ${cleanTopic}`
       }
     }
-    
+
     // Pattern 2: Extract full task: everything after the action verb
     if (!task) {
       const fullTaskPattern = /(?:write|create|make|generate|send|draft|tell|explain|describe|discuss|analyze)\s+([^.,!?\n]+?)(?:\s*$|\.|,|!|\?)/i
@@ -331,7 +345,7 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
       }
     }
   }
-  
+
   // If full task extraction didn't work, build from action + topic
   if (!task || task.length < 10) {
     if (topic && !topic.toLowerCase().includes('specified topic') && !topic.toLowerCase().includes('[subject]')) {
@@ -357,10 +371,10 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
       }
     }
   }
-  
+
   // Task is already cleaned by intelligent processor, just normalize spacing
   task = cleanText(task)
-  
+
   // Final cleanup: Remove any framework keywords that might have leaked into task
   // This prevents issues like "Action: Write about funy email Purpose"
   task = task
@@ -370,17 +384,17 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
     .replace(/\s*Action:.*$/i, '')
     .replace(/\s*Role:.*$/i, '')
     .trim()
-  
+
   // If task is empty after cleanup, rebuild it
   if (!task || task.length < 3) {
     task = `${action} about ${topic}`
   }
-  
+
   // Final cleanup: remove duplicate "about" phrases
   task = task.replace(/\babout\s+.*?\babout\s+/gi, "about ")
   // Remove duplicate action words
   task = task.replace(/^(write|create|make|generate|tell|explain|describe|analyze|discuss|build|design|develop)\s+\1\s+/i, "$1 ")
-  
+
   // Extract key terms from original prompt for use in framework outputs
   const originalPromptLower = prompt.toLowerCase()
   const keyTerms: string[] = []
@@ -399,7 +413,7 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
   if (originalPromptLower.includes('eco-friendly')) {
     keyTerms.push('eco-friendly')
   }
-  
+
   // Extract context - prefer structured format, then detected fields, then regex
   let context: string | undefined
   if (structured.isStructured && (structured as any).context) {
@@ -410,7 +424,7 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
     const contextMatch = cleanedPrompt.match(/(?:context:|background:|given that|considering)\s+([^.,!?\n]+)/i)
     context = contextMatch ? contextMatch[1].trim() : undefined
   }
-  
+
   // Extract constraints using NLP, but preserve key terms
   const nlpConstraints = extractConstraintsNLP(cleanedPrompt)
   let constraints: string | undefined
@@ -420,11 +434,11 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
   } else if (nlpConstraints.wordCount || nlpConstraints.style || nlpConstraints.format) {
     constraints = `Word count: ${nlpConstraints.wordCount || "not specified"}, Style: ${nlpConstraints.style || nlpConstraints.tone || "not specified"}, Format: ${nlpConstraints.format || "not specified"}`
   }
-  
+
   // Extract expected output
   const outputMatch = cleanedPrompt.match(/(?:output:|result:|should be|must be|format:)\s+([^.,!?\n]+)/i)
   const expectedOutput = outputMatch ? outputMatch[1].trim() : undefined
-  
+
   // Extract style using NLP - prefer structured format, then detected fields, then regex
   const nlpConstraintsForStyle = extractConstraintsNLP(cleanedPrompt)
   const style = tone || nlpConstraintsForStyle.tone || nlpConstraintsForStyle.style || (() => {
@@ -442,7 +456,7 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
   }
 
   return {
-    intent: cleanedPrompt, // Use cleaned prompt
+    intent: cleanedPrompt,
     task,
     context,
     constraints,
@@ -451,6 +465,8 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
     style,
     examples,
     keyTerms: keyTerms.length > 0 ? keyTerms : undefined,
+    action,
+    topic
   }
 }
 
@@ -459,37 +475,37 @@ async function parsePrompt(prompt: string, isFollowUp: boolean = false): Promise
  */
 function applyCoT(parsed: ParsedPrompt): string {
   const parts: string[] = []
-  
+
   // Include role if available (important for structured prompts)
   if (parsed.role) {
     // Clean role - remove "You are" if already present to prevent duplication
     const cleanRole = parsed.role.replace(/^you are\s+/i, "").trim()
     parts.push(`Role: ${cleanRole}`)
   }
-  
+
   // Use the corrected task (already processed by intelligent processor)
   const cleanTask = parsed.task || parsed.intent.split(/[.!?]/)[0].trim()
   parts.push(`Task: ${cleanTask}`)
-  
+
   if (parsed.context) {
     parts.push(`Context: ${parsed.context}`)
   }
-  
+
   parts.push("\nThink step by step:")
   parts.push("1. Understand the problem and requirements")
   parts.push("2. Break down into smaller sub-problems")
   parts.push("3. Solve each sub-problem systematically")
   parts.push("4. Combine solutions to reach the final answer")
   parts.push("5. Verify the solution meets all requirements")
-  
+
   if (parsed.constraints) {
     parts.push(`\nConstraints: ${parsed.constraints}`)
   }
-  
+
   if (parsed.expectedOutput) {
     parts.push(`\nExpected Output: ${parsed.expectedOutput}`)
   }
-  
+
   return parts.join("\n")
 }
 
@@ -498,21 +514,21 @@ function applyCoT(parsed: ParsedPrompt): string {
  */
 function applyToT(parsed: ParsedPrompt): string {
   const parts: string[] = []
-  
+
   // Use the corrected task (already processed by intelligent processor)
   const cleanTask = parsed.task || parsed.intent.split(/[.!?]/)[0].trim()
   parts.push(`Problem: ${cleanTask}`)
-  
+
   if (parsed.context) {
     parts.push(`Context: ${parsed.context}`)
   }
-  
+
   // Generate intelligent approaches based on task
   const taskLower = cleanTask.toLowerCase()
   let approach1 = "Direct approach focusing on core requirements"
   let approach2 = "Alternative method considering different perspectives"
   let approach3 = "Creative solution exploring innovative methods"
-  
+
   if (taskLower.includes('content') || taskLower.includes('write')) {
     approach1 = "Structured approach: outline → draft → refine"
     approach2 = "Narrative approach: storytelling with engaging elements"
@@ -522,7 +538,7 @@ function applyToT(parsed: ParsedPrompt): string {
     approach2 = "Creative approach: brainstorm innovative solutions"
     approach3 = "Systematic approach: follow proven methodology"
   }
-  
+
   parts.push("\nExplore multiple approaches:")
   parts.push(`Approach 1: ${approach1}`)
   parts.push(`Approach 2: ${approach2}`)
@@ -531,11 +547,11 @@ function applyToT(parsed: ParsedPrompt): string {
   parts.push("- Pros and cons of each path")
   parts.push("- Feasibility and effectiveness")
   parts.push("- Best path forward or combination")
-  
+
   if (parsed.constraints) {
     parts.push(`\nConstraints: ${parsed.constraints}`)
   }
-  
+
   return parts.join("\n")
 }
 
@@ -544,11 +560,11 @@ function applyToT(parsed: ParsedPrompt): string {
  */
 function applyAPE(parsed: ParsedPrompt): string {
   const parts: string[] = []
-  
+
   // Use the corrected task (already processed by intelligent processor)
   // Clean task to remove any framework keywords that might have leaked in
   let cleanTask = parsed.task || parsed.intent.split(/[.!?]/)[0].trim()
-  
+
   // Remove framework keywords if they appear in task (e.g., "Purpose", "Expectation", "Context")
   cleanTask = cleanTask
     .replace(/\s*Purpose:.*$/i, '')
@@ -556,38 +572,38 @@ function applyAPE(parsed: ParsedPrompt): string {
     .replace(/\s*Context:.*$/i, '')
     .replace(/\s*Action:.*$/i, '')
     .trim()
-  
+
   // If task is empty or too short, use action + topic
   if (!cleanTask || cleanTask.length < 5) {
     const action = parsed.action || 'write'
     const topic = parsed.topic || 'the specified topic'
     cleanTask = `${action} about ${topic}`
   }
-  
+
   // Detect specific email types from context
   const originalPrompt = parsed.intent || cleanTask
   const promptLower = originalPrompt.toLowerCase()
   let detectedEmailType: string | undefined
-  
+
   // Detect cold email from sales rep context
-  if ((promptLower.includes('sales rep') || promptLower.includes('company sales') || promptLower.includes('sales representative')) && 
-      (promptLower.includes('email') || promptLower.includes('write'))) {
+  if ((promptLower.includes('sales rep') || promptLower.includes('company sales') || promptLower.includes('sales representative')) &&
+    (promptLower.includes('email') || promptLower.includes('write'))) {
     detectedEmailType = 'cold email'
   } else if (promptLower.includes('cold email')) {
     detectedEmailType = 'cold email'
   }
-  
+
   // Enhance task with detected email type
   if (detectedEmailType && !cleanTask.toLowerCase().includes(detectedEmailType)) {
     cleanTask = cleanTask.replace(/\b(email|letter|message)\b/i, detectedEmailType)
   }
-  
+
   parts.push(`Action: ${cleanTask}`)
-  
+
   // Purpose - concise and specific
   let purpose: string | undefined
   const taskLower = cleanTask.toLowerCase()
-  
+
   if (detectedEmailType === 'cold email') {
     purpose = "To introduce product/service and generate interest from potential clients"
   } else if (taskLower.includes('content') || taskLower.includes('article')) {
@@ -600,7 +616,7 @@ function applyAPE(parsed: ParsedPrompt): string {
     purpose = "To achieve the desired outcome effectively"
   }
   parts.push(`Purpose: ${purpose}`)
-  
+
   // Expectation - concise and specific
   let expectation: string | undefined
   if (detectedEmailType === 'cold email') {
@@ -613,12 +629,12 @@ function applyAPE(parsed: ParsedPrompt): string {
     expectation = "High-quality output meeting requirements"
   }
   parts.push(`Expectation: ${expectation}`)
-  
+
   // Only add constraints if meaningful
   if (parsed.constraints && parsed.constraints.trim().length > 0 && !parsed.constraints.includes('not specified')) {
     parts.push(`\nConstraints: ${parsed.constraints}`)
   }
-  
+
   return parts.join("\n")
 }
 
@@ -627,7 +643,7 @@ function applyAPE(parsed: ParsedPrompt): string {
  */
 function applyRACE(parsed: ParsedPrompt): string {
   const parts: string[] = []
-  
+
   // Role - infer from task if not provided
   let role = parsed.role
   if (!role) {
@@ -642,29 +658,29 @@ function applyRACE(parsed: ParsedPrompt): string {
       role = "Expert"
     }
   }
-  
+
   // Clean role - remove "You are" if already present to prevent duplication
   role = role.replace(/^you are\s+/i, "").trim()
-  
+
   parts.push(`Role: You are ${role}`)
-  
+
   // Use the corrected task (already processed by intelligent processor)
   let cleanTask = parsed.task || parsed.intent.split(/[.!?]/)[0].trim()
-  
+
   // Remove duplicate "about" phrases to prevent duplication
   cleanTask = cleanTask.replace(/\babout\s+.*?\babout\s+/gi, "about ")
   // Remove duplicate action words at the start
   cleanTask = cleanTask.replace(/^(write|create|make|generate|tell|explain|describe|analyze|discuss|build|design|develop)\s+\1\s+/i, "$1 ")
-  
+
   // Detect specific email types
   const originalPrompt = parsed.intent || cleanTask
   const promptLower = originalPrompt.toLowerCase()
   if ((promptLower.includes('sales rep') || promptLower.includes('company sales')) && promptLower.includes('email') && !cleanTask.toLowerCase().includes('cold')) {
     cleanTask = cleanTask.replace(/\b(email|letter|message)\b/i, 'cold email')
   }
-  
+
   parts.push(`Action: ${cleanTask}`)
-  
+
   // Context - concise and specific
   let context = parsed.context
   if (!context) {
@@ -680,7 +696,7 @@ function applyRACE(parsed: ParsedPrompt): string {
     }
   }
   parts.push(`Context: ${context}`)
-  
+
   // Expectation - concise and specific
   let expectation = parsed.expectedOutput
   if (!expectation) {
@@ -700,12 +716,12 @@ function applyRACE(parsed: ParsedPrompt): string {
     }
   }
   parts.push(`Expectation: ${expectation}`)
-  
+
   // Only add constraints if meaningful
   if (parsed.constraints && parsed.constraints.trim().length > 0 && !parsed.constraints.includes('not specified')) {
     parts.push(`\nConstraints: ${parsed.constraints}`)
   }
-  
+
   return parts.join("\n")
 }
 
@@ -714,29 +730,29 @@ function applyRACE(parsed: ParsedPrompt): string {
  */
 function applyROSES(parsed: ParsedPrompt): string {
   const parts: string[] = []
-  
+
   // Role - use parsed role if available, otherwise default
   // IMPORTANT: Preserve original role terms like "Marketing Manager", "Sales Rep"
   let role = parsed.role || "Content Creator"
   // Remove "You are" if already present to prevent duplication
   role = role.replace(/^you are\s+/i, "").trim()
-  
+
   parts.push(`Role: You are ${role}`)
-  
+
   // Objective - use the corrected task, clean duplicates, preserve key terms
   let objective = parsed.task || parsed.intent.split(/[.!?]/)[0]
   // Remove duplicate "about" phrases to prevent duplication
   objective = objective.replace(/\babout\s+.*?\babout\s+/gi, "about ")
   // Remove duplicate action words at the start
   objective = objective.replace(/^(write|create|make|generate|tell|explain|describe|analyze|discuss|build|design|develop)\s+\1\s+/i, "$1 ")
-  
+
   // Detect specific email types
   const originalPrompt = parsed.intent || objective
   const promptLower = originalPrompt.toLowerCase()
   if ((promptLower.includes('sales rep') || promptLower.includes('company sales')) && promptLower.includes('email') && !objective.toLowerCase().includes('cold')) {
     objective = objective.replace(/\b(email|letter|message)\b/i, 'cold email')
   }
-  
+
   // Preserve key terms from original prompt in objective (only if meaningful)
   if (parsed.keyTerms && parsed.keyTerms.length > 0) {
     const objectiveLower = objective.toLowerCase()
@@ -745,13 +761,13 @@ function applyROSES(parsed: ParsedPrompt): string {
       objective += ` (${missingTerms.join(', ')})`
     }
   }
-  
+
   parts.push(`Objective: ${objective}`)
-  
+
   // Style - only if specified or meaningful
   const style = parsed.style || (promptLower.includes('email') && promptLower.includes('sales') ? "Professional and persuasive" : "Professional and engaging")
   parts.push(`Style: ${style}`)
-  
+
   // Example - generate intelligent example if missing
   if (parsed.examples && parsed.examples.length > 0) {
     parts.push(`Example: ${parsed.examples[0]}`)
@@ -759,11 +775,11 @@ function applyROSES(parsed: ParsedPrompt): string {
     const example = generateExample(parsed.task || parsed.intent, "ROSES")
     parts.push(`Example: ${example}`)
   }
-  
+
   // Scope
   const scope = parsed.constraints || "Complete and comprehensive"
   parts.push(`Scope: ${scope}`)
-  
+
   return parts.join("\n")
 }
 
@@ -772,26 +788,26 @@ function applyROSES(parsed: ParsedPrompt): string {
  */
 function applyGUIDE(parsed: ParsedPrompt): string {
   const parts: string[] = []
-  
+
   // Goal - use the corrected task
   const goal = parsed.task || parsed.intent.split(/[.!?]/)[0]
   parts.push(`Goal: ${goal}`)
-  
+
   // User
   const user = parsed.role || "General audience"
   parts.push(`User: For ${user}`)
-  
+
   // Instructions
   parts.push(`Instructions:`)
   parts.push("1. Understand the goal and user needs")
   parts.push("2. Follow best practices and guidelines")
   parts.push("3. Ensure clarity and completeness")
-  
+
   // Details
   if (parsed.context) {
     parts.push(`\nDetails: ${parsed.context}`)
   }
-  
+
   // Examples - generate if missing
   if (parsed.examples && parsed.examples.length > 0) {
     parts.push(`\nExamples:`)
@@ -803,11 +819,11 @@ function applyGUIDE(parsed: ParsedPrompt): string {
     parts.push(`\nExamples:`)
     parts.push(`1. ${example}`)
   }
-  
+
   if (parsed.constraints) {
     parts.push(`\nConstraints: ${parsed.constraints}`)
   }
-  
+
   return parts.join("\n")
 }
 
@@ -816,27 +832,27 @@ function applyGUIDE(parsed: ParsedPrompt): string {
  */
 function applyCREATE(parsed: ParsedPrompt): string {
   const parts: string[] = []
-  
+
   // Context
   const context = parsed.context || "Standard context"
   parts.push(`Context: ${context}`)
-  
+
   // Role
   const role = parsed.role || "Expert"
   parts.push(`Role: You are ${role}`)
-  
+
   // Expectation
   const expectation = parsed.expectedOutput || "High-quality, complete output"
   parts.push(`Expectation: ${expectation}`)
-  
+
   // Action - use the corrected task
   const action = parsed.task || parsed.intent.split(/[.!?]/)[0]
   parts.push(`Action: ${action}`)
-  
+
   // Tone
   const tone = parsed.style || "Professional and clear"
   parts.push(`Tone: ${tone}`)
-  
+
   // Examples - generate if missing
   if (parsed.examples && parsed.examples.length > 0) {
     parts.push(`Examples:`)
@@ -848,11 +864,11 @@ function applyCREATE(parsed: ParsedPrompt): string {
     parts.push(`Examples:`)
     parts.push(`1. ${example}`)
   }
-  
+
   if (parsed.constraints) {
     parts.push(`\nConstraints: ${parsed.constraints}`)
   }
-  
+
   return parts.join("\n")
 }
 
@@ -861,10 +877,10 @@ function applyCREATE(parsed: ParsedPrompt): string {
  */
 function applySMART(parsed: ParsedPrompt): string {
   const parts: string[] = []
-  
+
   // Goal - use the corrected task
   const goal = parsed.task || parsed.intent.split(/[.!?]/)[0]
-  
+
   parts.push(`Goal: ${goal}`)
   parts.push("\nSMART Criteria:")
   parts.push(`Specific: Clearly define what needs to be accomplished`)
@@ -872,30 +888,32 @@ function applySMART(parsed: ParsedPrompt): string {
   parts.push(`Achievable: Ensure the goal is realistic and attainable`)
   parts.push(`Relevant: Align with overall objectives and needs`)
   parts.push(`Time-bound: Set clear deadlines or timeframes`)
-  
+
   if (parsed.context) {
     parts.push(`\nContext: ${parsed.context}`)
   }
-  
+
   if (parsed.constraints) {
     parts.push(`\nConstraints: ${parsed.constraints}`)
   }
-  
+
   if (parsed.expectedOutput) {
     parts.push(`\nExpected Outcome: ${parsed.expectedOutput}`)
   }
-  
+
   return parts.join("\n")
 }
 
 /**
  * Transform prompt using a specific framework
  * Always uses original prompt to prevent cumulative modifications
+ * @param preParsed - If provided, skip parsePrompt (used by rankFrameworks to parse once and avoid timeouts)
  */
 export async function applyFramework(
   prompt: string,
   framework: FrameworkType,
-  isFollowUp: boolean = false
+  isFollowUp: boolean = false,
+  preParsed?: ParsedPrompt
 ): Promise<FrameworkOutput> {
   // Handle null, undefined, or empty prompts
   if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
@@ -907,10 +925,10 @@ export async function applyFramework(
       useCase: FRAMEWORKS[framework].useCase,
     }
   }
-  
-  const parsed = await parsePrompt(prompt, isFollowUp)
+
+  const parsed = preParsed ?? await parsePrompt(prompt, isFollowUp)
   let optimized = ""
-  
+
   // Handle empty parsed prompts (template-only or very short)
   if (!parsed.task || parsed.task.trim().length === 0) {
     optimized = "Please provide more details about what you'd like to accomplish."
@@ -944,7 +962,7 @@ export async function applyFramework(
         optimized = prompt || "Please provide a prompt to optimize."
     }
   }
-  
+
   return {
     framework,
     name: FRAMEWORKS[framework].name,
@@ -973,12 +991,12 @@ export async function rankFrameworks(prompt: string): Promise<Array<{ framework:
   // Check if prompt is in structured format
   const structured = parseStructuredPrompt(prompt)
   const frameworkHint = structured.isStructured ? detectFrameworkFromStructure(structured) : null
-  
+
   // Use intelligent processor for better analysis
   const processed = processPromptIntelligently(prompt)
   const cleanedPrompt = processed.corrected
   const lowerPrompt = cleanedPrompt.toLowerCase()
-  
+
   const rankings: Array<{ framework: FrameworkType; score: number; output: FrameworkOutput }> = []
 
   // Detect task type for better scoring
@@ -988,7 +1006,7 @@ export async function rankFrameworks(prompt: string): Promise<Array<{ framework:
   const isMath = lowerPrompt.match(/\b(math|number|calculate|formula|equation|compute)\b/)
   const isProfessional = lowerPrompt.match(/\b(professional|business|corporate|executive|client|stakeholder)\b/)
   const isInstruction = lowerPrompt.match(/\b(guide|tutorial|instructions|how to|steps|teach|learn)\b/)
-  
+
   // Boost scores for preferred frameworks from structured format
   const frameworkBoosts: Record<string, number> = {}
   if (frameworkHint) {
@@ -1000,7 +1018,7 @@ export async function rankFrameworks(prompt: string): Promise<Array<{ framework:
   // Get HF extractor for semantic similarity (optional - fast timeout)
   const hfExtractor = getHFIntentExtractor()
   let semanticScores: Record<string, number> = {}
-  
+
   // Try to calculate semantic similarity with very short timeout (2 seconds max)
   // If it fails, we'll use keyword-only scoring which is fast and reliable
   try {
@@ -1008,7 +1026,7 @@ export async function rankFrameworks(prompt: string): Promise<Array<{ framework:
       hfExtractor.initialize(),
       new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000)) // Fast timeout
     ])
-    
+
     // Only proceed if initialization succeeded quickly
     if (initResult !== false && hfExtractor) {
       const similarityPromises = Object.entries(FRAMEWORKS).map(async ([key, framework]) => {
@@ -1032,21 +1050,30 @@ export async function rankFrameworks(prompt: string): Promise<Array<{ framework:
     // Silently continue with keyword-only scoring (faster and more reliable)
   }
 
-  // Apply frameworks in parallel with timeout for each
-  // Reduce timeout to 1.5 seconds per framework to prevent long waits
+  // Parse once with keyword-only (skipHF) to avoid 8x HF calls and timeouts; reuse for all frameworks
+  let parsed: ParsedPrompt
+  try {
+    parsed = await Promise.race([
+      parsePrompt(prompt, false, { skipHF: true }),
+      new Promise<ParsedPrompt>((_, rej) => setTimeout(() => rej(new Error('parse timeout')), 6000))
+    ])
+  } catch {
+    parsed = getMinimalParsed(prompt)
+  }
+
+  // Apply frameworks in parallel; no heavy work (parse already done, applyXxx are sync)
   const frameworkPromises = Object.entries(FRAMEWORKS).map(async ([key, framework]) => {
     try {
-      // Apply framework with timeout (3 seconds max per framework)
       const output = await Promise.race([
-        applyFramework(prompt, key as FrameworkType),
-        new Promise<FrameworkOutput>((_, reject) => 
-          setTimeout(() => reject(new Error(`Framework ${key} timeout`)), 3000)
+        applyFramework(prompt, key as FrameworkType, false, parsed),
+        new Promise<FrameworkOutput>((_, reject) =>
+          setTimeout(() => reject(new Error(`Framework ${key} timeout`)), 5000)
         )
       ])
-      
+
       let score = 0
       let keywordScore = 0 // Initialize keyword score
-      
+
       // Add semantic similarity score (40% weight)
       if (semanticScores[key] !== undefined) {
         score += semanticScores[key] * 0.4
@@ -1056,7 +1083,7 @@ export async function rankFrameworks(prompt: string): Promise<Array<{ framework:
       if (frameworkBoosts[key]) {
         score += frameworkBoosts[key]
       }
-      
+
       // ROSES: Best for content creation, articles, reports, structured content
       if (key === "roses") {
         if (isContentCreation) keywordScore += 40 // High priority for content
@@ -1150,7 +1177,7 @@ export async function rankFrameworks(prompt: string): Promise<Array<{ framework:
         }
         keywordScore += 5 // Small default bonus (reduced from 10)
       }
-      
+
       // Combine semantic (40%) + keyword (60%) scores
       score += keywordScore * 0.6
 
@@ -1158,35 +1185,31 @@ export async function rankFrameworks(prompt: string): Promise<Array<{ framework:
     } catch (error) {
       console.warn(`PromptPrune: Error ranking ${key}:`, error)
       // Return a low score for failed frameworks instead of skipping
-      return { 
-        framework: key as FrameworkType, 
-        score: 0, 
-        output: { 
-          framework: key, 
-          name: framework.name, 
-          description: framework.description, 
-          optimized: prompt, 
-          useCase: framework.useCase 
-        } 
+      return {
+        framework: key as FrameworkType,
+        score: 0,
+        output: {
+          framework: key,
+          name: framework.name,
+          description: framework.description,
+          optimized: prompt,
+          useCase: framework.useCase
+        }
       }
     }
   })
-  
-  // Wait for all frameworks with overall timeout (8 seconds max)
-  // Use Promise.allSettled to get partial results even if some fail
+
+  // Wait for all frameworks with overall timeout (12s: 6s parse + 6s for 8 parallel applies)
   let allRankings: Array<{ framework: FrameworkType; score: number; output: FrameworkOutput }> = []
-  
+
   try {
     const results = await Promise.race([
       Promise.allSettled(frameworkPromises),
       new Promise<PromiseSettledResult<any>[]>((resolve) => {
-        setTimeout(() => {
-          // Timeout - resolve with empty array to trigger fallback
-          resolve([])
-        }, 8000)
+        setTimeout(() => resolve([]), 12000)
       })
     ])
-    
+
     // Extract successful results
     results.forEach((result, index) => {
       if (result.status === 'fulfilled' && result.value && result.value.score > 0) {
@@ -1196,7 +1219,7 @@ export async function rankFrameworks(prompt: string): Promise<Array<{ framework:
   } catch (error) {
     console.warn('[rankFrameworks] Error waiting for frameworks:', error)
   }
-  
+
   // Add successful rankings
   allRankings.forEach(ranking => {
     if (ranking && ranking.score > 0) {
@@ -1210,14 +1233,14 @@ export async function rankFrameworks(prompt: string): Promise<Array<{ framework:
     // Quick fallback: just score by keywords without applying frameworks
     for (const [key, framework] of Object.entries(FRAMEWORKS)) {
       let keywordScore = 0
-      
+
       // Quick keyword scoring (same logic as above but without applying framework)
       if (key === "roses" && isContentCreation) keywordScore = 40
       else if (key === "race" && isProfessional) keywordScore = 35
       else if (key === "cot" && isReasoning) keywordScore = 35
       else if (key === "ape" && lowerPrompt.match(/\b(create|write|make)\b/)) keywordScore = 25
       else keywordScore = 10 // Default score
-      
+
       rankings.push({
         framework: key as FrameworkType,
         score: keywordScore,
@@ -1236,3 +1259,79 @@ export async function rankFrameworks(prompt: string): Promise<Array<{ framework:
   return rankings.sort((a, b) => b.score - a.score)
 }
 
+/**
+ * Detect framework from structured prompt hints
+ */
+export function detectFrameworkFromStructure(structured: any): { preferredFrameworks: FrameworkType[] } | null {
+  if (!structured || !structured.isStructured) return null
+
+  const text = (structured.original || "").toLowerCase()
+  const preferredFrameworks: FrameworkType[] = []
+
+  if (text.includes("chain of thought") || text.includes("step by step")) preferredFrameworks.push("cot")
+  if (text.includes("tree of thought")) preferredFrameworks.push("tot")
+  if (text.includes("action:") && text.includes("purpose:") && text.includes("expectation:")) preferredFrameworks.push("ape")
+  if (text.includes("role:") && text.includes("action:") && text.includes("context:") && text.includes("expectation:")) preferredFrameworks.push("race")
+  if (text.includes("objective:") && text.includes("style:") && text.includes("scope:")) preferredFrameworks.push("roses")
+  if (text.includes("goal:") && text.includes("user:") && text.includes("instructions:")) preferredFrameworks.push("guide")
+
+  return preferredFrameworks.length > 0 ? { preferredFrameworks } : null
+}
+
+/**
+ * Parse a structured prompt format (Field: Value)
+ */
+export function parseStructuredPrompt(text: string): any {
+  const result: any = {
+    isStructured: false,
+    original: text
+  }
+
+  const lines = text.split("\n")
+  const fieldPattern = /^([\w\s]+):\s*(.*)$/i
+
+  let matchCount = 0
+  lines.forEach(line => {
+    const match = line.match(fieldPattern)
+    if (match) {
+      const field = match[1].trim().toLowerCase()
+      const value = match[2].trim()
+
+      if (field === 'role') result.role = value
+      else if (field === 'action' || field === 'task') result.action = value
+      else if (field === 'topic' || field === 'subject') result.topic = value
+      else if (field === 'context' || field === 'background') result.context = value
+      else if (field === 'expectation' || field === 'expected output') result.expectation = value
+      else if (field === 'purpose') result.purpose = value
+      else if (field === 'style' || field === 'tone') result.tone = value
+      else if (field === 'format') result.format = value
+      else if (field === 'constraints') result.constraints = value
+
+      matchCount++
+    }
+  })
+
+  // If we found at least 2 structured fields, consider it structured
+  if (matchCount >= 2) {
+    result.isStructured = true
+  }
+
+  return result
+}
+
+/**
+ * Convert structured prompt object back to natural language for ML processing
+ */
+export function convertStructuredToNatural(structured: any): string {
+  if (!structured) return ""
+
+  const parts: string[] = []
+  if (structured.role) parts.push(`Act as a ${structured.role}.`)
+  if (structured.action) parts.push(`Your task is to ${structured.action}.`)
+  if (structured.topic) parts.push(`The topic is ${structured.topic}.`)
+  if (structured.context) parts.push(`Context: ${structured.context}.`)
+  if (structured.tone) parts.push(`Use a ${structured.tone} tone.`)
+  if (structured.format) parts.push(`Format as ${structured.format}.`)
+
+  return parts.join(" ")
+}
