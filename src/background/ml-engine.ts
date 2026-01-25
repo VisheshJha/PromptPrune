@@ -66,7 +66,13 @@ if ((env as any).backends?.onnx?.wasm) {
 }
 
 // Groot API base (set by background before first ML use). ONNX/tokenizer fetched via {base}/hf-proxy/...
-let _grootBase = 'http://localhost:8080/api/v1';
+// Use same environment variable replacement as background service worker
+const GROOT_BASE_URL_RAW = "__GROOT_API_URL__"
+const GROOT_BASE_URL_DEFAULT = GROOT_BASE_URL_RAW === "__GROOT_API_URL__"
+  ? "http://localhost:8080/api/v1"
+  : GROOT_BASE_URL_RAW
+
+let _grootBase = GROOT_BASE_URL_DEFAULT;
 export function setGrootBaseUrl(url: string) {
   _grootBase = url.replace(/\/$/, '');
 
@@ -238,10 +244,13 @@ async function initPIIClassifier(): Promise<void> {
   }
 
   // Defensive: ensure Transformers.js hub uses Groot hf-proxy before any fetch (tokenizer/ONNX)
+  // Use current _grootBase (which may have been set via setGrootBaseUrl or uses default from env var)
   const base = _grootBase.replace(/\/$/, '');
   (env as any).remoteHost = `${base}/hf-proxy`;
   (env as any).remotePathTemplate = '{model}/resolve/{revision}/';
   (env as any).allowLocalModels = false;
+  
+  console.log('[ML Engine] initPIIClassifier: Using Groot base URL:', base);
   
   // Ensure cache is configured on global env (Gliner will use this)
   (env as any).useCustomCache = true;
@@ -391,8 +400,15 @@ const OPTIMIZER_MODEL_FALLBACK = 'onnx-community/Qwen2.5-0.5B-Instruct';
  * Uses Qwen2.5-0.5B-Instruct (or OpenELM-270M-Instruct as primary) for intelligent prompt optimization.
  * Uses WebGPU when available to balance thermal load (PII stays on CPU). INT4 quantized.
  * Model weights are cached in IndexedDB after first download.
+ * 
+ * DISABLED FOR ROLLOUT: Optimizer model download disabled to keep extension light.
+ * TODO: Re-enable when ready to launch optimize feature.
  */
 async function initPromptOptimizer(): Promise<void> {
+  // DISABLED: Optimizer model initialization commented out for rollout
+  console.log('[ML Engine] ⚠️ Optimizer model initialization is disabled for rollout');
+  return;
+  /*
   if (promptOptimizer) return;
 
   console.log('[ML Engine] Initializing Prompt Optimizer (Model B - PrunePrompt, INT4)...');
@@ -472,7 +488,10 @@ async function initPromptOptimizer(): Promise<void> {
       }
     }
   }
-  throw lastError;
+  // DISABLED: Don't throw error, just return (model disabled for rollout)
+  // throw lastError;
+  return; // Early return - model disabled
+  */
 }
 
 type DetectedItem = {
@@ -712,54 +731,19 @@ async function prunePrompt(payload: {
           return text; // Return template as-is
         }
         
+        // DISABLED: Optimizer model initialization commented out for rollout
         // Initialize optimizer model if not already loaded
         if (!promptOptimizer) {
-          try {
-            console.log('[ML Engine] prunePrompt OPTIMIZE: Initializing optimizer model (this may take a moment on first use)...');
-            // Set progress indicator
-            setStorage({ 
-              'optimizer_model_progress': 0,
-              'optimizer_model_status': 'initializing'
-            });
-            await initPromptOptimizer();
-            console.log('[ML Engine] prunePrompt OPTIMIZE: Optimizer model initialized successfully');
-          } catch (err) {
-            console.error('[ML Engine] prunePrompt OPTIMIZE: Model init failed:', err);
-            // Clear progress on error
-            setStorage({ 
-              'optimizer_model_progress': 0,
-              'optimizer_model_status': 'failed'
-            });
-            // Fallback to token-level pruning (improved to preserve spaces)
-            console.log('[ML Engine] prunePrompt OPTIMIZE: Falling back to token-level pruning');
-            // Better approach: split into words, remove filler words, preserve structure
-            const words = text.split(/\s+/);
-            const fillerWords = ['actually', 'basically', 'literally', 'really', 'very', 'quite', 'rather', 'pretty', 'somewhat', 
-                                 'kind of', 'sort of', 'type of', 'a bit', 'a little', 'a lot',
-                                 'extremely', 'incredibly', 'absolutely', 'totally', 'completely', 'entirely',
-                                 'I think', 'I believe', 'I feel', 'in my opinion', 'it seems', 'it appears',
-                                 'and also', 'and then', 'and so', 'but also', 'or else',
-                                 'the fact that', 'the thing is', 'the point is'];
-            
-            const filtered = words.filter(word => {
-              const lower = word.toLowerCase().replace(/[.,!?;:()\[\]{}"']/g, '');
-              return !fillerWords.some(filler => lower === filler || lower.includes(filler));
-            });
-            
-            // Reconstruct with proper spacing
-            const pruned = filtered.join(' ')
-              .replace(/\s+([.,!?;:])/g, '$1') // Remove space before punctuation
-              .replace(/([.,!?;:])\s+/g, '$1 ') // Ensure space after punctuation
-              .replace(/\s+/g, ' ') // Normalize multiple spaces
-              .trim();
-            
-            return pruned || text;
-          }
-        }
-
-        if (!promptOptimizer) {
-          console.warn('[ML Engine] prunePrompt OPTIMIZE: Optimizer model unavailable, using fallback');
-          // Improved fallback: remove filler words while preserving structure
+          // DISABLED: Skip optimizer model initialization, use fallback directly
+          console.log('[ML Engine] prunePrompt OPTIMIZE: Optimizer model disabled for rollout, using fallback');
+          // Clear progress
+          setStorage({ 
+            'optimizer_model_progress': 0,
+            'optimizer_model_status': 'disabled'
+          });
+          // Fallback to token-level pruning (improved to preserve spaces)
+          console.log('[ML Engine] prunePrompt OPTIMIZE: Falling back to token-level pruning');
+          // Better approach: split into words, remove filler words, preserve structure
           const words = text.split(/\s+/);
           const fillerWords = ['actually', 'basically', 'literally', 'really', 'very', 'quite', 'rather', 'pretty', 'somewhat', 
                                'kind of', 'sort of', 'type of', 'a bit', 'a little', 'a lot',
@@ -773,106 +757,30 @@ async function prunePrompt(payload: {
             return !fillerWords.some(filler => lower === filler || lower.includes(filler));
           });
           
+          // Reconstruct with proper spacing
           const pruned = filtered.join(' ')
-            .replace(/\s+([.,!?;:])/g, '$1')
-            .replace(/([.,!?;:])\s+/g, '$1 ')
-            .replace(/\s+/g, ' ')
+            .replace(/\s+([.,!?;:])/g, '$1') // Remove space before punctuation
+            .replace(/([.,!?;:])\s+/g, '$1 ') // Ensure space after punctuation
+            .replace(/\s+/g, ' ') // Normalize multiple spaces
             .trim();
           
           return pruned || text;
         }
-
-        try {
-          // Create an optimization prompt that instructs the model to make the prompt better for AI
-          // Focus on: clarity, precision, structure, removing ambiguity, improving AI comprehension
-          const optimizationPrompt = `You are an expert at optimizing prompts for AI systems. Optimize the following prompt to make it:
-- Clearer and more precise
-- Better structured for AI understanding
-- Free of ambiguity and redundancy
-- More effective at conveying intent
-- Concise while preserving all important information
-
-Keep the core intent and meaning exactly the same. Return ONLY the optimized prompt, no explanations or prefixes:\n\n${text}`;
-
-          console.log('[ML Engine] prunePrompt OPTIMIZE: Calling Qwen model...');
-          console.log('[ML Engine] prunePrompt OPTIMIZE: Input length=', text.length, 'tokens');
-          
-          // Add timeout for model generation (60 seconds max)
-          const generationTimeout = 60000;
-          const output = await Promise.race([
-            promptOptimizer(optimizationPrompt, {
-              max_new_tokens: Math.min(text.length * 2, 500), // Allow up to 2x length or 500 tokens
-              temperature: 0.3, // Lower temperature for more consistent, focused optimization
-              do_sample: true,
-              top_p: 0.9,
-              repetition_penalty: 1.1 // Reduce repetition
-            }),
-            new Promise((_, reject) => 
-              setTimeout(() => reject(new Error('Model generation timeout after 60s')), generationTimeout)
-            )
-          ]) as any;
-
-          // Extract the optimized text from the model output
-          let optimizedText = '';
-          if (Array.isArray(output)) {
-            optimizedText = output[0]?.generated_text || '';
-          } else {
-            optimizedText = output?.generated_text || '';
-          }
-
-          // Remove the optimization prompt prefix if present
-          if (optimizedText.includes(optimizationPrompt)) {
-            optimizedText = optimizedText.replace(optimizationPrompt, '').trim();
-          }
-
-          // Clean up any extra formatting or prefixes the model might add
-          optimizedText = optimizedText
-            .replace(/^(Optimized prompt:|Here's the optimized prompt:|Optimized version:)\s*/i, '')
-            .trim();
-
-          // Ensure we have a valid result
-          if (!optimizedText || optimizedText.trim().length === 0) {
-            console.warn('[ML Engine] prunePrompt OPTIMIZE: Model returned empty, using original');
-            return text;
-          }
-
-          console.log('[ML Engine] prunePrompt OPTIMIZE: result length=', optimizedText.length, 'changed=', optimizedText !== text);
-          console.log('[ML Engine] prunePrompt OPTIMIZE: result preview=', optimizedText.substring(0, 100));
-          
-          return optimizedText;
-        } catch (error) {
-          console.error('[ML Engine] prunePrompt OPTIMIZE: Model optimization failed:', error);
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          console.error('[ML Engine] prunePrompt OPTIMIZE: Error details:', errorMsg);
-          
-          // Clear progress on error
-          setStorage({ 
-            'optimizer_model_progress': 0,
-            'optimizer_model_status': 'error'
-          });
-          
-          // Fallback to token-level pruning
-          console.log('[ML Engine] prunePrompt OPTIMIZE: Falling back to token-level pruning');
-          const tokens = text.split(/(\s+|[.,!?;:()\[\]{}"'])/);
-          const fillerIndices = identifyFillerTokens(tokens);
-          const pruned = tokens
-            .map((token, index) => fillerIndices.has(index) ? '' : token)
-            .join('')
-            .replace(/\s+/g, ' ')
-            .trim();
-          
-          // Ensure we return something valid
-          const result = pruned || text;
-          console.log('[ML Engine] prunePrompt OPTIMIZE: Fallback result length=', result.length);
-          return result;
-        }
+        
+        // DISABLED: Model-based optimization code removed for rollout
+        // The code below would use the Qwen model for intelligent optimization
+        // Re-enable when ready to launch optimize feature
+        // (Code removed to keep extension light and avoid syntax issues)
       }
 
       case 'MATCH_FRAMEWORK': {
+        // DISABLED: Framework matching with optimizer model disabled for rollout
         // For framework matching, we still need model generation
         // But use token-level pruning first, then apply framework style
         if (!promptOptimizer) {
-          await initPromptOptimizer();
+          // DISABLED: Skip optimizer model initialization
+          console.log('[ML Engine] prunePrompt MATCH_FRAMEWORK: Optimizer model disabled for rollout, using fallback');
+          // await initPromptOptimizer();
         }
 
         // First, prune filler tokens
@@ -884,22 +792,9 @@ Keep the core intent and meaning exactly the same. Return ONLY the optimized pro
           .replace(/\s+/g, ' ')
           .trim();
 
-        // Then apply framework style with minimal generation
-        const frameworkList = payload.frameworks?.join(', ') || 'general';
-        const frameworkPrompt = `Rewrite this prompt in ${frameworkList} style (keep it concise):\n\n${pruned}`;
-
-        const output = await promptOptimizer(frameworkPrompt, {
-          max_new_tokens: Math.min(pruned.length + 100, 300), // Minimal generation
-          temperature: 0.2, // Very low for consistency
-          do_sample: true,
-          top_p: 0.8
-        });
-
-        const optimizedText = Array.isArray(output)
-          ? output[0]?.generated_text || pruned
-          : output?.generated_text || pruned;
-
-        return optimizedText.replace(frameworkPrompt, '').trim() || pruned;
+        // DISABLED: Skip model-based framework matching, use fallback
+        console.log('[ML Engine] prunePrompt MATCH_FRAMEWORK: Using token-level pruning fallback (model disabled)');
+        return pruned; // Return pruned text without framework styling
       }
 
       default:

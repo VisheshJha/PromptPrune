@@ -568,7 +568,9 @@ function handleMenuAction(action: string, textArea: HTMLTextAreaElement | HTMLDi
   // Only smart mode now
   switch (action) {
     case "analyze":
-      analyzeWithSmartOptimizer(textArea, text)
+      // Optimize feature disabled for now - coming soon
+      showNotification("Optimize feature coming soon!", "info")
+      // analyzeWithSmartOptimizer(textArea, text)
       break
     case "shorten":
       shortenPrompt(textArea, text).catch(err => {

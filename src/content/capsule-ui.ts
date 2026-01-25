@@ -94,14 +94,10 @@ export class CapsuleUI {
 
     const optimizeBtn = this.shadowRoot.getElementById('optimize-btn')
     if (optimizeBtn) {
-      optimizeBtn.textContent = loading ? '...' : 'Optimize'
-      if (loading) {
-        optimizeBtn.setAttribute('disabled', 'true')
-        this.element.style.cursor = 'wait'
-      } else {
-        optimizeBtn.removeAttribute('disabled')
-        this.element.style.cursor = 'pointer'
-      }
+      // Optimize feature disabled - keep button disabled with "soon" text
+      optimizeBtn.textContent = 'Optimise (soon)'
+      optimizeBtn.setAttribute('disabled', 'true')
+      // Don't change cursor or state for disabled optimize button
     }
   }
 
@@ -319,6 +315,13 @@ export class CapsuleUI {
         opacity: 0.9;
       }
 
+      .btn-primary:disabled {
+        background: #9ca3af !important;
+        color: white !important;
+        cursor: not-allowed;
+        opacity: 0.6;
+      }
+
       .btn-danger {
         background: var(--pp-danger);
         color: white !important;
@@ -389,7 +392,7 @@ export class CapsuleUI {
         <div class="actions">
           <button class="btn btn-danger" id="mask-btn">Mask</button>
           <button class="btn btn-danger visible" id="clear-btn" title="Clear text" style="display: block;">Clear</button>
-          <button class="btn btn-primary" id="optimize-btn" title="Optimize prompt using AI">Optimize</button>
+          <button class="btn btn-primary" id="optimize-btn" title="Optimize prompt using AI" disabled>Optimise (soon)</button>
           <button class="btn" id="framework-btn" title="Frameworks">⌘</button>
         </div>
       </div>
@@ -406,8 +409,10 @@ export class CapsuleUI {
 
     optimizeBtn?.addEventListener('click', (e) => {
       e.stopPropagation()
-      if (this.isLocked) return
-      this.emit('optimize')
+      e.preventDefault()
+      // Optimize feature disabled for now - coming soon
+      // if (this.isLocked) return
+      // this.emit('optimize')
     })
 
     frameworkBtn?.addEventListener('click', (e) => {

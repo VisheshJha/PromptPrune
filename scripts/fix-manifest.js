@@ -421,7 +421,44 @@ const replaceApiUrl = (apiUrl) => {
     filesToReplace.push(backgroundFile)
   }
 
-  // Popup and other JS files
+  // Offscreen document (contains ml-engine.ts)
+  const tabsDir = path.join(buildDir, 'tabs')
+  if (fs.existsSync(tabsDir)) {
+    try {
+      const offscreenFiles = glob.sync(path.join(tabsDir, 'offscreen.*.js'))
+      filesToReplace.push(...offscreenFiles)
+    } catch (err) {
+      // Fallback: try to find offscreen files manually
+      try {
+        const files = fs.readdirSync(tabsDir)
+        files.filter(f => f.startsWith('offscreen.') && f.endsWith('.js')).forEach(f => {
+          filesToReplace.push(path.join(tabsDir, f))
+        })
+      } catch (err2) {
+        console.warn('Could not find offscreen files:', err2.message)
+      }
+    }
+  }
+
+  // Popup files (auth-service is bundled here)
+  const popupDir = path.join(buildDir, 'static', 'popup')
+  if (fs.existsSync(popupDir)) {
+    try {
+      const popupFiles = glob.sync(path.join(popupDir, '*.js'))
+      filesToReplace.push(...popupFiles)
+    } catch (err) {
+      try {
+        const files = fs.readdirSync(popupDir)
+        files.filter(f => f.endsWith('.js')).forEach(f => {
+          filesToReplace.push(path.join(popupDir, f))
+        })
+      } catch (err2) {
+        console.warn('Could not find popup files:', err2.message)
+      }
+    }
+  }
+
+  // Popup and other JS files in root
   try {
     const jsFiles = glob.sync(path.join(buildDir, '*.js'))
     filesToReplace.push(...jsFiles)
@@ -436,6 +473,18 @@ const replaceApiUrl = (apiUrl) => {
       console.warn('Could not find JS files to replace:', err2.message)
     }
   }
+  
+  // Also check all subdirectories recursively for JS files
+  try {
+    const allJsFiles = glob.sync(path.join(buildDir, '**/*.js'))
+    allJsFiles.forEach(file => {
+      if (!filesToReplace.includes(file)) {
+        filesToReplace.push(file)
+      }
+    })
+  } catch (err) {
+    console.warn('Could not recursively find JS files:', err.message)
+  }
 
   let replacedCount = 0
   filesToReplace.forEach(filePath => {
@@ -449,40 +498,87 @@ const replaceApiUrl = (apiUrl) => {
         // const GROOT_BASE_URL = GROOT_BASE_URL_RAW === "__GROOT_API_URL__" ? "http://localhost:8080/api/v1" : GROOT_BASE_URL_RAW
         // When minified: "__GROOT_API_URL__"===i?"http://localhost:8080/api/v1":i
         
-        // IMPORTANT: Replace localhost FIRST (in case placeholder was already replaced)
-        // 1. Fix unquoted URLs (common issue after minification)
-        // Pattern: let i=https://... or const i=https://... or var i=https://...
-        const unquotedUrlPattern = /(let|const|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(https?:\/\/[^"'\s,;\)]+)/g
-        content = content.replace(unquotedUrlPattern, (match, keyword, varName, url) => {
-          // Only fix if it's our API URL
-          if (url.includes('localhost:8080/api/v1') || url.includes('groot-backend')) {
-            return `${keyword} ${varName}="${apiUrl}"`
-          }
-          return match
-        })
-        
-        // 2. Replace any localhost:8080/api/v1 URLs with production URL (quoted versions)
-        content = content.replace(/http:\/\/localhost:8080\/api\/v1/g, apiUrl)
-        content = content.replace(/"http:\/\/localhost:8080\/api\/v1"/g, `"${apiUrl}"`)
-        content = content.replace(/'http:\/\/localhost:8080\/api\/v1'/g, `'${apiUrl}'`)
-        
-        // 3. Replace minified ternary pattern (most specific - handle first)
-        // Pattern: "__GROOT_API_URL__"===var?"http://localhost:8080/api/v1":var
-        // Replace with production URL directly (no ternary needed in production)
-        const minifiedTernaryPattern = /"__GROOT_API_URL__"===([a-zA-Z_$][a-zA-Z0-9_$]*)\?"http:\/\/localhost:8080\/api\/v1":\1/g
-        content = content.replace(minifiedTernaryPattern, `"${apiUrl}"`)
-        
+        // STEP 1: Replace placeholders first (before they get minified to localhost)
         // 4. Replace direct placeholder: __GROOT_API_URL__
         content = content.replace(/__GROOT_API_URL__/g, apiUrl)
         
         // 5. Replace string literals: "__GROOT_API_URL__" or '__GROOT_API_URL__'
         content = content.replace(/"__GROOT_API_URL__"/g, `"${apiUrl}"`)
         content = content.replace(/'__GROOT_API_URL__'/g, `'${apiUrl}'`)
+        
+        // 3. Replace minified ternary pattern
+        // Pattern: "__GROOT_API_URL__"===var?"http://localhost:8080/api/v1":var
+        // Replace with production URL directly (no ternary needed in production)
+        const minifiedTernaryPattern = /"__GROOT_API_URL__"===([a-zA-Z_$][a-zA-Z0-9_$]*)\?"http:\/\/localhost:8080\/api\/v1":\1/g
+        content = content.replace(minifiedTernaryPattern, `"${apiUrl}"`)
+        
+        // STEP 2: Replace any localhost URLs (in case placeholder was already replaced or code has hardcoded localhost)
+        // This is critical - replace ALL instances of localhost URLs
+        const localhostPatterns = [
+          /"http:\/\/localhost:8080\/api\/v1"/g,
+          /'http:\/\/localhost:8080\/api\/v1'/g,
+          /`http:\/\/localhost:8080\/api\/v1`/g,
+          /http:\/\/localhost:8080\/api\/v1/g
+        ]
+        localhostPatterns.forEach(pattern => {
+          content = content.replace(pattern, (match) => {
+            // Preserve quotes if they exist
+            if (match.startsWith('"') && match.endsWith('"')) {
+              return `"${apiUrl}"`
+            }
+            if (match.startsWith("'") && match.endsWith("'")) {
+              return `'${apiUrl}'`
+            }
+            if (match.startsWith('`') && match.endsWith('`')) {
+              return `\`${apiUrl}\``
+            }
+            return apiUrl
+          })
+        })
+        
+        // Also replace any remaining localhost URLs (case-insensitive, any quote style)
+        content = content.replace(/http:\/\/localhost:8080\/api\/v1/gi, apiUrl)
+        
+        // Special handling for auth endpoints that might be constructed differently
+        // Pattern: base + "/auth/extension/exchange" or base + '/auth/extension/exchange'
+        const authEndpointPatterns = [
+          /(http:\/\/localhost:8080\/api\/v1)\s*\+\s*["']\/auth\/extension\/exchange["']/g,
+          /(http:\/\/localhost:8080\/api\/v1)\s*\+\s*`\/auth\/extension\/exchange`/g
+        ]
+        authEndpointPatterns.forEach(pattern => {
+          content = content.replace(pattern, (match) => {
+            // Replace the localhost part with production URL
+            return match.replace(/http:\/\/localhost:8080\/api\/v1/gi, apiUrl)
+          })
+        })
+        
+        // Fix unquoted URLs (common issue after minification)
+        // Pattern: let i=https://... or const i=https://... or var i=https://...
+        const unquotedUrlPattern = /(let|const|var)\s+([a-zA-Z_$][a-zA-Z0-9_$]*)\s*=\s*(https?:\/\/[^"'\s,;\)]+)/g
+        content = content.replace(unquotedUrlPattern, (match, keyword, varName, url) => {
+          // Only fix if it's our API URL
+          if (url.includes('localhost:8080/api/v1')) {
+            return `${keyword} ${varName}="${apiUrl}"`
+          }
+          return match
+        })
 
+        // Verify replacement worked - check if any localhost URLs remain
+        const hasLocalhost = /localhost:8080\/api\/v1/i.test(content)
+        const hasPlaceholder = /__GROOT_API_URL__/.test(content)
+        
         if (content !== originalContent) {
           fs.writeFileSync(filePath, content)
           replacedCount++
-          console.log(`✅ Replaced API URL in ${path.basename(filePath)}`)
+          if (hasLocalhost) {
+            console.warn(`⚠️  Replaced API URL in ${path.basename(filePath)} but localhost URLs may still remain`)
+          } else if (hasPlaceholder) {
+            console.warn(`⚠️  Replaced API URL in ${path.basename(filePath)} but placeholder may still remain`)
+          } else {
+            console.log(`✅ Replaced API URL in ${path.basename(filePath)}`)
+          }
+        } else if (hasLocalhost || hasPlaceholder) {
+          console.warn(`⚠️  ${path.basename(filePath)} contains localhost or placeholder but no replacements were made`)
         }
       } catch (err) {
         console.warn(`⚠️  Could not replace API URL in ${path.basename(filePath)}:`, err.message)
@@ -527,8 +623,9 @@ if (apiUrl && apiUrl !== '__GROOT_API_URL__') {
       console.log(`✅ Replaced production URLs with localhost (${replaced} file(s))`)
     }
   } else {
-    console.log('ℹ️  Using default API URL (localhost). Set GROOT_API_URL env var to override.')
-    console.log('   Example: GROOT_API_URL=https://api.example.com/api/v1 npm run build')
+    console.log('ℹ️  Using default API URL (localhost). This is correct for dev builds.')
+    console.log('   For production builds, use: npm run build:prod')
+    console.log('   Or set GROOT_API_URL env var: GROOT_API_URL=https://api.example.com/api/v1 npm run build')
   }
 }
 
