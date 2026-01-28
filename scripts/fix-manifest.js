@@ -80,11 +80,21 @@ const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'))
 let manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
 
 // PRESERVE the 'key' field from package.json (for stable extension ID)
-const existingKey = packageJson.manifest?.key || packageJson.key
+// Check extensionKey first (root level, outside manifest), then manifest._chromeKey (hidden from Plasmo), then manifest.key (old location), then key (legacy)
+const existingKey = packageJson.extensionKey || packageJson.manifest?._chromeKey || packageJson.manifest?.key || packageJson.key
+
+// PRESERVE the 'oauth2' field from package.json (Chrome-specific, not in Web Extension spec)
+// Check extensionOAuth2 (root level, outside manifest), then manifest._chromeOAuth2 (hidden from Plasmo), then manifest.oauth2 (old location), then oauth2 (legacy)
+const existingOAuth2 = packageJson.extensionOAuth2 || packageJson.manifest?._chromeOAuth2 || packageJson.manifest?.oauth2 || packageJson.oauth2
+
+// Check if this is a Chrome Web Store build (key field must be removed)
+const isChromeWebStoreBuild = process.env.CHROME_WEB_STORE_BUILD === 'true' || 
+                               process.env.REMOVE_KEY === 'true' ||
+                               process.env.NODE_ENV === 'production'
 
 // CRITICAL: Move key to the TOP of manifest (Chrome reads it first)
-// Create a new manifest object with key first
-if (existingKey) {
+// Only do this for local dev builds (Chrome Web Store rejects the key field)
+if (existingKey && !isChromeWebStoreBuild) {
   const { key, ...rest } = manifest
   manifest = {
     key: existingKey,  // Key MUST be first
@@ -144,9 +154,8 @@ const allMatches = [
   "https://copilot.microsoft.com/*",
   "https://www.copilot.microsoft.com/*",
   "https://*.copilot.microsoft.com/*",
-  "https://copilot.microsoft.com/**",
-  "https://www.bing.com/chat*",
-  "https://bing.com/chat*",
+  "https://www.bing.com/chat/*",
+  "https://bing.com/chat/*",
   "https://www.perplexity.ai/*",
   "https://perplexity.ai/*",
   
@@ -273,8 +282,8 @@ if (!manifest.content_scripts || manifest.content_scripts.length === 0) {
     }
   ]
 
-  // Preserve key field before writing
-  if (existingKey && !manifest.key) {
+  // Preserve key field before writing (only for local dev, not Chrome Web Store)
+  if (existingKey && !manifest.key && !isChromeWebStoreBuild) {
     manifest.key = existingKey
   }
 
@@ -296,8 +305,8 @@ if (!manifest.content_scripts || manifest.content_scripts.length === 0) {
     }
   })
 
-  // Preserve key field before writing
-  if (existingKey && !manifest.key) {
+  // Preserve key field before writing (only for local dev, not Chrome Web Store)
+  if (existingKey && !manifest.key && !isChromeWebStoreBuild) {
     manifest.key = existingKey
     updated = true
   }
@@ -314,41 +323,56 @@ if (!manifest.content_scripts || manifest.content_scripts.length === 0) {
 let manifestChanged = false
 
 // Add CSP for WASM (Critical for ML Engine - runs directly in service worker)
-// Forcefully set it to ensure it's correct
-manifest.content_security_policy = manifest.content_security_policy || {}
-// MV3: wasm-unsafe-eval for WASM. 'unsafe-eval' is not allowed in extension_pages.
-manifest.content_security_policy.extension_pages = "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
-manifestChanged = true
-console.log('✅ Added CSP for WASM (wasm-unsafe-eval for MV3) - enables ML Engine in Service Worker')
-
-// Ensure web_accessible_resources includes transformers assets for Local Asset Bridge
-if (!manifest.web_accessible_resources) {
-  manifest.web_accessible_resources = []
+// Use CSP from package.json if available, otherwise use default
+const existingCSP = packageJson._contentSecurityPolicy || packageJson.manifest?.content_security_policy
+if (existingCSP) {
+  manifest.content_security_policy = existingCSP
+  manifestChanged = true
+  console.log('✅ Added CSP from package.json')
+} else {
+  manifest.content_security_policy = manifest.content_security_policy || {}
+  // MV3: wasm-unsafe-eval for WASM. 'unsafe-eval' is not allowed in extension_pages.
+  manifest.content_security_policy.extension_pages = "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  manifestChanged = true
+  console.log('✅ Added CSP for WASM (wasm-unsafe-eval for MV3) - enables ML Engine in Service Worker')
 }
 
-// Check if transformers assets are already included
-const hasTransformersAssets = manifest.web_accessible_resources.some((resource) => {
-  if (typeof resource === 'string') {
-    return resource.includes('assets/transformers')
-  }
-  if (resource.resources) {
-    return resource.resources.some((r) => r.includes('assets/transformers'))
-  }
-  return false
-})
-
-if (!hasTransformersAssets) {
-  // Add transformers assets to web_accessible_resources
-  manifest.web_accessible_resources.push({
-    resources: [
-      'assets/transformers/*.wasm',
-      'assets/transformers/*.mjs',
-      'assets/transformers/*.js'
-    ],
-    matches: ['<all_urls>']
-  })
+// Ensure web_accessible_resources includes transformers assets for Local Asset Bridge
+// Use web_accessible_resources from package.json if available
+const existingWebAccessibleResources = packageJson._webAccessibleResources || packageJson.manifest?.web_accessible_resources
+if (existingWebAccessibleResources && Array.isArray(existingWebAccessibleResources)) {
+  manifest.web_accessible_resources = existingWebAccessibleResources
   manifestChanged = true
-  console.log('✅ Added transformers assets to web_accessible_resources (Local Asset Bridge)')
+  console.log('✅ Added web_accessible_resources from package.json')
+} else {
+  if (!manifest.web_accessible_resources) {
+    manifest.web_accessible_resources = []
+  }
+
+  // Check if transformers assets are already included
+  const hasTransformersAssets = manifest.web_accessible_resources.some((resource) => {
+    if (typeof resource === 'string') {
+      return resource.includes('assets/transformers')
+    }
+    if (resource.resources) {
+      return resource.resources.some((r) => r.includes('assets/transformers'))
+    }
+    return false
+  })
+
+  if (!hasTransformersAssets) {
+    // Add transformers assets to web_accessible_resources
+    manifest.web_accessible_resources.push({
+      resources: [
+        'assets/transformers/*.wasm',
+        'assets/transformers/*.mjs',
+        'assets/transformers/*.js'
+      ],
+      matches: ['<all_urls>']
+    })
+    manifestChanged = true
+    console.log('✅ Added transformers assets to web_accessible_resources (Local Asset Bridge)')
+  }
 }
 
 if (!manifest.permissions) {
@@ -363,19 +387,50 @@ requiredPermissions.forEach(perm => {
 })
 
 // Ensure host_permissions are set
-if (!manifest.host_permissions) {
-  manifest.host_permissions = []
+// Use host_permissions from package.json if available (expanded list), 
+// otherwise use allMatches
+const existingHostPermissions = packageJson._hostPermissions || packageJson.manifest?.host_permissions
+if (existingHostPermissions && Array.isArray(existingHostPermissions) && existingHostPermissions.length > 0) {
+  // Only replace if the root level has a more detailed list (not just "<all_urls>")
+  if (existingHostPermissions.length > 1 || !existingHostPermissions.includes('<all_urls>')) {
+    manifest.host_permissions = existingHostPermissions
+    manifestChanged = true
+    console.log('✅ Updated host_permissions from package.json (expanded list)')
+  } else if (manifest.host_permissions && manifest.host_permissions.includes('<all_urls>')) {
+    // If both are "<all_urls>", keep it as is
+    console.log('✅ host_permissions already set to <all_urls>')
+  }
+} else {
+  // If manifest already has host_permissions from Plasmo, keep it
+  // Otherwise, use allMatches to populate it
+  if (!manifest.host_permissions || manifest.host_permissions.length === 0) {
+    manifest.host_permissions = []
+    // Use the same allMatches array for host_permissions
+    const requiredHosts = allMatches
+    requiredHosts.forEach(host => {
+      if (!manifest.host_permissions.includes(host)) {
+        manifest.host_permissions.push(host)
+        manifestChanged = true
+      }
+    })
+  }
 }
-// Use the same allMatches array for host_permissions
-const requiredHosts = allMatches
-requiredHosts.forEach(host => {
-  if (!manifest.host_permissions.includes(host)) {
-    manifest.host_permissions.push(host)
+
+// Fix background service worker path - Plasmo sometimes generates .ts instead of .js
+if (manifest.background) {
+  // Fix: Replace .ts extension with .js in service_worker path
+  if (manifest.background.service_worker && manifest.background.service_worker.endsWith('.ts')) {
+    manifest.background.service_worker = manifest.background.service_worker.replace(/\.ts$/, '.js')
+    manifestChanged = true
+    console.log('✅ Fixed service_worker path: .ts -> .js')
+  }
+  // Ensure type is set
+  if (!manifest.background.type) {
+    manifest.background.type = 'module'
     manifestChanged = true
   }
-})
-
-if (!manifest.background) {
+} else {
+  // If no background, check if file exists and add it
   const backgroundFile = path.join(buildDir, 'static', 'background', 'index.js')
   if (fs.existsSync(backgroundFile)) {
     manifest.background = {
@@ -383,18 +438,39 @@ if (!manifest.background) {
       type: 'module'
     }
     manifestChanged = true
+    console.log('✅ Added background service worker')
   }
-} else if (manifest.background && !manifest.background.type) {
-  manifest.background.type = 'module'
-  manifestChanged = true
 }
 
-// Preserve key field for stable extension ID (always use the one from package.json)
-if (existingKey) {
-  if (manifest.key !== existingKey) {
-    manifest.key = existingKey
+// Add oauth2 field if it exists in package.json (Chrome-specific)
+if (existingOAuth2) {
+  if (JSON.stringify(manifest.oauth2) !== JSON.stringify(existingOAuth2)) {
+    manifest.oauth2 = existingOAuth2
     manifestChanged = true
-    console.log('✅ Updated key field in manifest.json (ensuring stable extension ID)')
+    console.log('✅ Added oauth2 field to manifest.json')
+  }
+}
+
+// Handle key field: Remove for Chrome Web Store, keep for local dev
+// Chrome Web Store rejects the key field - it generates its own key
+// For local dev, we keep it to maintain stable extension ID
+// IMPORTANT: This must run AFTER all other manifest modifications
+// (isChromeWebStoreBuild is already defined above)
+if (isChromeWebStoreBuild) {
+  // Remove key field for Chrome Web Store submission (safety check - should already be removed)
+  if (manifest.key) {
+    delete manifest.key
+    manifestChanged = true
+    console.log('✅ Removed key field from manifest (Chrome Web Store requirement)')
+  }
+} else {
+  // Preserve key field for local development (stable extension ID)
+  if (existingKey) {
+    if (manifest.key !== existingKey) {
+      manifest.key = existingKey
+      manifestChanged = true
+      console.log('✅ Updated key field in manifest.json (ensuring stable extension ID)')
+    }
   }
 }
 

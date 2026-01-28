@@ -1,82 +1,8 @@
 {
-  "name": "promptprune",
+  "name": "test",
+  "version": "1.0.0",
   "displayName": "PromptPrune",
-  "version": "1.0.0-beta.1",
-  "description": "Optimize AI prompts to reduce token usage and costs using local processing",
-  "author": "PromptPrune Team",
-  "scripts": {
-    "dev": "node scripts/fix-dev-manifest.js; (sleep 10 && node scripts/fix-dev-manifest.js) & plasmo dev",
-    "build": "npm run setup:assets && plasmo build && node scripts/fix-manifest.js",
-    "build:dev": "GROOT_API_URL=http://localhost:8080/api/v1 npm run build",
-    "build:prod": "GROOT_API_URL=https://groot-backend-prod-luun7betqa-el.a.run.app/api/v1 npm run build",
-    "setup:assets": "node scripts/setup-transformers-assets.js",
-    "package": "plasmo package",
-    "share": "npm run build:prod && node scripts/create-share-package.js",
-    "test": "vitest",
-    "test:ui": "vitest --ui",
-    "test:coverage": "vitest --coverage",
-    "postinstall": "patch-package && node scripts/fix-onnx-imports.js"
-  },
-  "dependencies": {
-    "@plasmohq/storage": "^1.15.0",
-    "@xenova/transformers": "^2.17.2",
-    "compromise": "^14.14.4",
-    "gliner": "^0.0.19",
-    "indiankit": "^1.0.0",
-    "js-tiktoken": "^1.0.21",
-    "onnxruntime-web": "1.17.3",
-    "plasmo": "^0.88.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
-  "overrides": {
-    "onnxruntime-web": "1.17.3"
-  },
-  "alias": {
-    "onnxruntime-web": "./node_modules/onnxruntime-web/dist/esm/ort.min.js",
-    "onnxruntime-web/dist/ort.mjs": "./node_modules/onnxruntime-web/dist/esm/ort.min.js",
-    "onnxruntime-web/dist/ort.webgl.min.mjs": "./node_modules/onnxruntime-web/dist/esm/ort.webgl.min.js",
-    "onnxruntime-web/dist/ort.wasm.min.mjs": "./node_modules/onnxruntime-web/dist/esm/ort.wasm.min.js",
-    "onnxruntime-web/dist/ort.webgpu.min.mjs": "./node_modules/onnxruntime-web/dist/esm/ort.webgpu.min.js",
-    "onnxruntime-web/dist/ort.webgpu.bundle.min.mjs": "./node_modules/onnxruntime-web/dist/esm/ort.webgpu.min.js"
-  },
-  "browser": {
-    "fs": false,
-    "path": false,
-    "url": false,
-    "sharp": false,
-    "onnxruntime-node": false,
-    "node:fs/promises": false,
-    "node:path": false
-  },
-  "devDependencies": {
-    "@testing-library/jest-dom": "^6.1.5",
-    "@testing-library/react": "^14.1.2",
-    "@testing-library/user-event": "^14.5.1",
-    "@types/chrome": "^0.0.251",
-    "@types/node": "^20.10.0",
-    "@types/react": "^18.2.45",
-    "@types/react-dom": "^18.2.18",
-    "@vitejs/plugin-react": "^4.2.1",
-    "@vitest/coverage-v8": "^1.1.0",
-    "@vitest/ui": "^1.1.0",
-    "autoprefixer": "^10.4.16",
-    "baseline-browser-mapping": "^2.9.17",
-    "glob": "^11.0.3",
-    "jsdom": "^23.0.1",
-    "patch-package": "^8.0.0",
-    "postcss": "^8.4.32",
-    "tailwindcss": "^3.4.0",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.3.3",
-    "vitest": "^1.1.0"
-  },
   "manifest": {
-    "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3L+8QnqA7AJpo6SjiWFNouaYP9datcfToUsPIMuDMT0ZnYR66J/v04QwQxI8EEkvbRE5jqujluHtYfnpbWy2z4uCztuB5sAbXbKbZ7yUpkZrxVDDIL0Rl/RSSG48qX2r6uEo2OWIKfg5WUEyPLiZPA1J6uWmOwfUjEDeLXR36g0Gt/0cYj7ce+80Loub8KpILYZoIL0byF58TjXFZlA02jaEkm2cAyCoPBQr1G9e34tXJUtLVLNEwUQyHbivmCl/knr8gm0PPIb3f9Rj5WTptroieHizoBzzhScemJ8JLw+vEUjCSzjwfvWUXizzINpbdXyF51uGpfAbKUEK7Giz1wIDAQAB",
-    "background": {
-      "service_worker": "static/background/index.js",
-      "type": "module"
-    },
     "host_permissions": [
       "http://localhost/*",
       "http://127.0.0.1/*",
@@ -93,9 +19,8 @@
       "https://copilot.microsoft.com/*",
       "https://www.copilot.microsoft.com/*",
       "https://*.copilot.microsoft.com/*",
-      "https://copilot.microsoft.com/**",
-      "https://www.bing.com/chat*",
-      "https://bing.com/chat*",
+      "https://www.bing.com/chat/*",
+      "https://bing.com/chat/*",
       "https://www.perplexity.ai/*",
       "https://perplexity.ai/*",
       "https://www.canva.com/*",
@@ -216,13 +141,79 @@
           "<all_urls>"
         ]
       }
-    ],
-    "oauth2": {
-      "client_id": "1072024805594-d10g6089rbtv9t83rssk58rohg54bljh.apps.googleusercontent.com",
-      "scopes": [
-        "https://www.googleapis.com/auth/userinfo.email",
-        "https://www.googleapis.com/auth/userinfo.profile"
-      ]
-    }
+    ]
+  },
+  "extensionKey": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3L+8QnqA7AJpo6SjiWFNouaYP9datcfToUsPIMuDMT0ZnYR66J/v04QwQxI8EEkvbRE5jqujluHtYfnpbWy2z4uCztuB5sAbXbKbZ7yUpkZrxVDDIL0Rl/RSSG48qX2r6uEo2OWIKfg5WUEyPLiZPA1J6uWmOwfUjEDeLXR36g0Gt/0cYj7ce+80Loub8KpILYZoIL0byF58TjXFZlA02jaEkm2cAyCoPBQr1G9e34tXJUtLVLNEwUQyHbivmCl/knr8gm0PPIb3f9Rj5WTptroieHizoBzzhScemJ8JLw+vEUjCSzjwfvWUXizzINpbdXyF51uGpfAbKUEK7Giz1wIDAQAB",
+  "extensionOAuth2": {
+    "client_id": "1072024805594-d10g6089rbtv9t83rssk58rohg54bljh.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile"
+    ]
+  },
+  "scripts": {
+    "dev": "node scripts/fix-dev-manifest.js; (sleep 10 && node scripts/fix-dev-manifest.js) & plasmo dev",
+    "build": "npm run setup:assets && plasmo build && node scripts/fix-manifest.js",
+    "build:dev": "GROOT_API_URL=http://localhost:8080/api/v1 npm run build",
+    "build:prod": "GROOT_API_URL=https://groot-backend-prod-luun7betqa-el.a.run.app/api/v1 npm run build",
+    "build:cws": "CHROME_WEB_STORE_BUILD=true GROOT_API_URL=https://groot-backend-prod-luun7betqa-el.a.run.app/api/v1 npm run setup:assets && plasmo build && CHROME_WEB_STORE_BUILD=true node scripts/fix-manifest.js && CHROME_WEB_STORE_BUILD=true node scripts/create-share-package.js",
+    "build:cws-with-key": "GROOT_API_URL=https://groot-backend-prod-luun7betqa-el.a.run.app/api/v1 npm run setup:assets && plasmo build && node scripts/fix-manifest.js && node scripts/create-share-package.js",
+    "setup:assets": "node scripts/setup-transformers-assets.js",
+    "package": "plasmo package",
+    "share": "npm run build:prod && node scripts/create-share-package.js",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage",
+    "postinstall": "patch-package && node scripts/fix-onnx-imports.js"
+  },
+  "dependencies": {
+    "@plasmohq/storage": "^1.15.0",
+    "@xenova/transformers": "^2.17.2",
+    "compromise": "^14.14.4",
+    "gliner": "^0.0.19",
+    "indiankit": "^1.0.0",
+    "js-tiktoken": "^1.0.21",
+    "onnxruntime-web": "1.17.3",
+    "plasmo": "^0.88.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.1.5",
+    "@testing-library/react": "^14.1.2",
+    "@testing-library/user-event": "^14.5.1",
+    "@types/chrome": "^0.0.251",
+    "@types/node": "^20.10.0",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
+    "@vitest/coverage-v8": "^1.1.0",
+    "@vitest/ui": "^1.1.0",
+    "autoprefixer": "^10.4.16",
+    "baseline-browser-mapping": "^2.9.17",
+    "glob": "^11.0.3",
+    "jsdom": "^23.0.1",
+    "patch-package": "^8.0.0",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.3.3",
+    "vitest": "^1.1.0"
+  },
+  "overrides": {
+    "onnxruntime-web": "1.17.3"
+  },
+  "alias": {
+    "onnxruntime-web": "./node_modules/onnxruntime-web/dist/ort.min.js",
+    "onnxruntime-web/dist/ort.mjs": "./node_modules/onnxruntime-web/dist/ort.min.js",
+    "onnxruntime-web/dist/ort.wasm.min.mjs": "./node_modules/onnxruntime-web/dist/ort.wasm.min.js",
+    "onnxruntime-web/dist/ort.webgl.min.mjs": "./node_modules/onnxruntime-web/dist/ort.webgl.min.js",
+    "onnxruntime-web/dist/ort.webgpu.min.mjs": "./node_modules/onnxruntime-web/dist/ort.webgpu.min.js",
+    "onnxruntime-web/dist/ort.webgpu.bundle.min.mjs": "./node_modules/onnxruntime-web/dist/ort.webgpu.min.js"
+  },
+  "browser": {
+    "onnxruntime-node": false,
+    "fs": false,
+    "path": false
   }
 }

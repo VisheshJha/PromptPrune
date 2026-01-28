@@ -44,9 +44,8 @@ export const config: PlasmoCSConfig = {
     "https://copilot.microsoft.com/*",
     "https://www.copilot.microsoft.com/*",
     "https://*.copilot.microsoft.com/*",
-    "https://copilot.microsoft.com/**",
-    "https://www.bing.com/chat*",
-    "https://bing.com/chat*",
+    "https://www.bing.com/chat/*",
+    "https://bing.com/chat/*",
     "https://www.perplexity.ai/*",
     "https://perplexity.ai/*",
 
@@ -3152,35 +3151,6 @@ Tone: `
         capsule.hide()
       }
     }, 200)
-  }
-
-  // Prefill template when textarea is focused and empty
-  function prefillTemplate() {
-    const currentText = getText(textArea).trim()
-    
-    // Only prefill if:
-    // 1. Textarea is empty
-    // 2. User hasn't explicitly cleared it
-    // 3. It's not already a template format
-    if (currentText.length === 0 && 
-        !textArea.hasAttribute("data-cleared-by-user") &&
-        !/^(Role:|Task:|Context:|Format:|Tone:)/m.test(currentText)) {
-      
-      const template = `Role: 
-Task: 
-Context: 
-Format: 
-Tone: `
-      
-      setText(textArea, template)
-      
-      // Focus and place cursor after "Role: "
-      textArea.focus()
-      if (textArea instanceof HTMLTextAreaElement || textArea instanceof HTMLInputElement) {
-        const rolePos = template.indexOf("Role: ") + 6
-        textArea.setSelectionRange(rolePos, rolePos)
-      }
-    }
   }
 
   textArea.addEventListener("focus", (e) => {

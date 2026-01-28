@@ -44,11 +44,59 @@ if (!fs.existsSync(manifestPath)) {
 }
 
 // Read version from manifest
-const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+let manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
 const version = manifest.version || '1.0.0'
+
+// Conditionally remove 'key' field based on environment variable
+// Chrome Web Store CAN accept the key field - it uses it to set your extension ID
+// Only remove if explicitly requested (for cases where you want Chrome to generate a new ID)
+const shouldRemoveKey = process.env.REMOVE_KEY === 'true' || process.env.CHROME_WEB_STORE_BUILD === 'true'
+if (manifest.key && shouldRemoveKey) {
+  console.log('⚠️  Removing "key" field from manifest (as requested)')
+  delete manifest.key
+  // Write the updated manifest back
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+} else if (manifest.key) {
+  console.log('✅ Keeping "key" field in manifest (will use your extension ID)')
+}
 
 console.log(`✅ Found extension (v${version})`)
 console.log(`📁 Extension directory: ${EXTENSION_DIR}\n`)
+
+// Verify icon exists (required for Chrome Web Store)
+const iconPaths = [
+  path.join(EXTENSION_DIR, 'icon.png'),
+  path.join(EXTENSION_DIR, 'icon-128.png'),
+  path.join(EXTENSION_DIR, 'icons', 'icon-128.png'),
+  path.join(EXTENSION_DIR, 'icons', 'icon.png')
+]
+
+let iconFound = false
+let iconPath = null
+for (const iconFile of iconPaths) {
+  if (fs.existsSync(iconFile)) {
+    iconFound = true
+    iconPath = iconFile
+    const stats = fs.statSync(iconFile)
+    console.log(`✅ Found extension icon: ${path.basename(iconFile)} (${(stats.size / 1024).toFixed(1)} KB)`)
+    break
+  }
+}
+
+if (!iconFound) {
+  console.warn('⚠️  WARNING: Extension icon not found in build directory!')
+  console.warn('   Chrome Web Store requires a 128x128 PNG icon in the ZIP file.')
+  console.warn('   Expected locations:')
+  iconPaths.forEach(p => console.warn(`     - ${p}`))
+  console.warn('   Please ensure icon exists before submitting to Chrome Web Store.\n')
+} else {
+  // Verify icon dimensions (basic check - file size)
+  const stats = fs.statSync(iconPath)
+  if (stats.size < 1000) {
+    console.warn('⚠️  WARNING: Icon file seems too small. Verify it\'s 128x128 pixels.')
+  }
+  console.log('')
+}
 
 // Create zip file
 console.log('📦 Creating zip file...')
